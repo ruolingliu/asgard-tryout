@@ -1,0 +1,172 @@
+# Asgard
+
+這個客戶的 Agentic 應用所需的全部 Asgard CR,都在這裡定義與部署。
+
+工作方式是 spec-driven:`requirements/` 是實作的事實來源(見下方 Spec-Driven Development)。
+
+> 這個 repo 裡所有給人看的中文——包括這份 README、上表的「說明」欄、以及各
+> project 的說明段落——寫法見
+> [`.agents/skills/plain-chinese/`](.agents/skills/plain-chinese/)。
+
+每個 project 是一份獨立 Helm chart,放在 `projects/<project>/`:
+
+<!-- asgard-cli:managed:start -->
+<!-- 這張表由 `asgard-cli init` 與 `asgard-cli project add` 維護,清單直接讀 repo 本身
+     (.asgard-pipeline.yaml 的 chart 路徑 ∪ projects/ 底下的資料夾),
+     不另存一份。兩個標記之間的內容
+     每次 scaffold 都會重寫,所以這張表只有工具推導得出來的兩欄。
+     每個 project 做什麼,寫在標記外面 —— 寫在裡面的下一次 init 就沒了。
+     asgard-cli check 會比對這張表與 projects/ 底下實際的資料夾。
+
+     這裡不列部署目標:一份 chart 部署到哪裡是 .asgard-pipeline.yaml 裡的 Release
+     決定的,一份 chart 可以有好幾個。`asgard-cli pipeline releases` 是現況。 -->
+
+| Project | 目錄 |
+|---|---|
+
+> 還沒有 project。用 `asgard-cli project add <slug>` 新增 —— 它會連 chart 骨架一起寫。
+
+<!-- asgard-cli:managed:end -->
+部署宣告只有一份:根目錄的 [`.asgard-pipeline.yaml`](.asgard-pipeline.yaml)。它列出有哪些
+Release(一份 chart 部署到一個 Platform Project、由一條 tag 或 branch 規則觸發)以及每個
+Release 吃哪些 key。它只宣告 key,不放值。值填在 Platform 上,namespace 由 Release 綁的
+Project 決定。
+
+> 順序:推 tag 之前,那個 Release 必須先在 Platform 上建好。命中一個沒建過的
+> Release 不會產生任何 Run,只有 `asgard-cli pipeline deliveries` 說得出為什麼。
+>
+>     asgard-cli pipeline release create <name> --project <id>
+
+全部細節見 [`AGENTS.md`](AGENTS.md)。
+
+## 目錄
+
+```
+AGENTS.md                    # coding agent 的單一事實來源(CLAUDE.md 只是 @AGENTS.md 指標)
+docs/
+  README.md                  # 文件目錄索引 + 四層心智模型 + 與 AGENTS.md 的分界
+  spec-driven-development.md # SDD 規範
+  spec/asgard/          # ★ Living Spec —— 系統**當下**的行為規格(先讀這個)
+  decisions/                 # dated 決議紀錄(不可變,回答「當初為什麼」)
+  meeting-notes/             # raw 會議 / issue 輸入(收斂前;可省略的一層)
+requirements/                # 實作事實來源(requests / tasks + _index)
+references/                  # 背景資料(不可直接照著實作)
+.agents/skills/              # design-time 技能(給在這個 repo 工作的 coding agent)
+.asgard-pipeline.yaml        # ★ 部署宣告:有哪些 Release、各自的觸發規則與 key。不放值
+.asgard-cli.yaml             # 這個 checkout 對到哪個 workspace / pipeline。**Platform 不讀**
+assets/
+  skills/<skill>/SKILL.md    # runtime 技能來源(由各 SkillSet 挑選,同步進平台)
+projects/<project>/
+  chart/app/{templates,values.yaml}   # values.yaml 只放預設值
+```
+
+本地能跑的檢核是 `asgard-cli gate` 一個命令:`check`(結構不變量)、`lint`(每個 `.Values.*`
+有沒有預設值)與 `verify`(渲染後的 CR 交叉引用與一系統一 Agent 的不變量)都在裡面。能不能部署由
+Platform 判定:它會把每個 CR 送進 apiserver 做 dry run,那是本機做不到的,因為 client
+從頭到尾不會拿到叢集憑證。
+
+### 技能放哪裡 —— 兩種技能,不可混用
+
+| | `.agents/skills/` | `assets/skills/` |
+|---|---|---|
+| 給誰用 | 在這個 repo 工作的 coding agent | 部署後的 Asgard agent |
+| 什麼時候 | design time(寫 CR 的時候) | runtime(回答使用者的時候) |
+| 怎麼生效 | 任何認 `.agents/skills` 的 coding agent 直接從工作目錄讀 | commit → SourceSet 同步 → `SkillSet.searchPaths` 選取 → 由 Agent 或 SandboxBlueprint 綁定 |
+| 會進叢集嗎 | 不會 | 會,那就是目的 |
+
+`assets/skills/` 的 `searchPaths` 要逐個技能目錄列出,不能只列父目錄(平台以「一個
+searchPath = 一個技能目錄」解析)。
+
+## Spec-Driven Development
+
+文件分四層,分層的依據是時態:
+
+```
+docs/meeting-notes/   raw 原始輸入(收斂前)         ── 可省略的一層
+docs/decisions/       dated 決議紀錄(不可變)        ── 「當初為什麼這樣定」
+docs/spec/<slug>/     ★ Living Spec(持續改寫)      ── 「現在的行為是什麼」
+requirements/tasks/   可執行任務規格(draft→done)   ── 「這件工作怎麼做、怎麼驗」
+```
+
+- 接手這個 repo 先讀 [`docs/spec/asgard/`](docs/spec/asgard/)。
+  它是系統當下行為的唯一描述。`AGENTS.md` 寫的是怎麼改這個 repo。
+  同一件事只寫一邊,分界見 [`docs/README.md`](docs/README.md)。
+- 一份 task spec 記錄的是對 living spec 的變更(delta)。它到 `done` 之後就不再被讀,
+  所以行為變了要把 delta 套回 living spec,順帶定案的決策要寫一份 `docs/decisions/`。
+
+## 環境設定(一次性)
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r .agents/skills/db-query/scripts/requirements.txt
+cp .env.example .env                                   # 再填入各資料庫的連線值
+brew install helm                                      # 只需要 helm;asgard-cli doctor 會告訴你缺什麼
+```
+
+`.env` 的非密碼欄位可從 Platform 上該 Release 的 Variables 對照填:
+
+```bash
+asgard-cli pipeline variables list --release <name>
+```
+
+密碼看不到 —— secret 存進 Platform 之後就讀不回來了,只回報有沒有設、幾行。
+
+### `.env` 與 Release 專屬 Secret 是兩套東西,不要混
+
+|  | `.env` | Release 專屬 Secret(K8s Secret) |
+|---|---|---|
+| 誰讀 | 你的筆電上的 `db-query` skill | 叢集裡的 Asgard CR |
+| 誰建 | 你自己 `cp .env.example .env` | Platform,每個 Release 一組,名字注入 `.Values.asgard.appSecretName` |
+| 放什麼 | 只有 DB 連線 | 所有 CR 用到的憑證,由 `.asgard-pipeline.yaml` 的 `appSecret` 宣告 key |
+| 會進叢集嗎 | 不會,完全不參與部署 | 會,CR 以 `secretKeyRef` 取用 |
+
+chart 裡只寫 `secretKeyRef`,憑證值不進 values、不進 git。chart 也不可以自己
+宣告那個 Secret:渲染出任何非 `asgard-ai.com` 的資源會被 Plan 擋下。
+
+## 驗收閘門
+
+本機三關(release 可省略=全部);完整程序見 `.agents/skills/asgard-cr-verification/`:
+
+```bash
+asgard-cli gate                 # 本機能檢的全部,含 lint 那一關
+asgard-cli verify [release]     # 或者迭代時單跑一關
+```
+
+不要裸跑 `helm lint`。Platform 每次渲染都注入保留的 `.Values.asgard` 區塊,而 chart 不可以
+在自己的 values.yaml 宣告它,所以不帶 `-f` 裸跑會在每個貼 label 的 chart 上失敗,但 chart
+本身沒有問題。`gate` 的 `lint` 那一關只餵那一個檔案,其餘一概不餵,所以它仍然證明
+values.yaml 替 chart 自己擁有的每個 `.Values.*` 都宣告了預設值。
+
+第四關在 Platform 上,不能跳過:推上去之後,Plan 會把每個渲染出來的 CR 送進 apiserver
+做 server-side dry run,CRD 的 CEL、pattern、必填欄位與「欄位會不會被靜默丟棄」都在那裡被檢查。
+本機做不到,因為 client 從頭到尾不會拿到叢集憑證。所以前三關檢查的是過得了 dry run、
+但到 runtime 才出錯的那一類問題。
+
+```bash
+asgard-cli pipeline runs watch --release <name> --ref <tag>
+```
+
+任何一步紅就停。
+
+## 部署
+
+推 tag 觸發 Platform 上的 Pipeline。哪個 tag 對到哪個 Release,由 `.asgard-pipeline.yaml` 每個
+Release 的 `on.pattern` 決定;同一個 tag 可以同時命中多個 Release,各自產生一個 Run。
+
+```bash
+git push origin dev-0.1.0
+asgard-cli pipeline runs watch --release <name> --ref dev-0.1.0
+asgard-cli pipeline runs approve <run-id>     # Run 停在 Review,除非該 Release 開了 auto apply
+```
+
+Apply 用的是 Plan 當下抓下來的 chart 與值,不是 repo 現在的樣子,所以 tag 被移動或檔案被
+改,都不影響等待審核中的 Run。
+
+> [!IMPORTANT]
+> 不要從本機 `helm upgrade`。client 拿不到叢集憑證,本機也無法 upgrade。
+> 理由見 [`AGENTS.md`](AGENTS.md) 的 Deploy。
+
+## 目前狀態
+
+- [x] repo 骨架(docs 四層、requirements、design-time 技能、部署宣告)
+

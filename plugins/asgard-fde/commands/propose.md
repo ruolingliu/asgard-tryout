@@ -1,0 +1,31 @@
+---
+description: Build the deck that goes in front of the customer.
+---
+
+Before writing any slide, load the deck skill, which holds the rules for decks:
+
+```
+.agents/skills/proposal-deck/SKILL.md
+```
+
+The three that get broken most:
+
+- No CR kinds, no `ts-` / `sl-` / `dc-` prefixes, no internal tool names -
+  not in the text, and not inside a screenshot either
+- Say what it does, in their words, not what it is made of
+- A question page lists only the things whose answer changes what gets built,
+  not everything you do not know
+
+What the deck is proposing has to be decided before it is written, and the
+material for that is:
+
+```bash
+`.agents/skills/asgard-platform/guide/requirements.md`    # what the interview should have settled
+asgard-cli size <shape>                 # how big the thing actually is
+`.agents/skills/asgard-platform/wiki/screenshots.md`             # which picture answers which question
+```
+
+Open any screenshot before it goes on a slide. Nothing records when they
+were captured, most of the index has never been opened, and of the ones that
+have, cropping was needed as often as not. Leave out a screenshot of a console
+the customer will not recognise.

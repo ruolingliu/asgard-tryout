@@ -1,0 +1,107 @@
+# requirements
+
+`requirements/` stores executable requirements and specs. This is the implementation source of truth for agents.
+
+Read order:
+
+1. `docs/spec/asgard/` — the living spec for the area you are touching. It describes
+   what the system does *today*; your task spec is a delta against it.
+2. `requirements/_index.md`
+3. `requirements/requests/_index.md` or `requirements/tasks/_index.md`
+4. Target `REQ-*.md` or `TASK-*.md`
+5. `docs/decisions/` when you need to know why something is the way it is
+6. `references/` only when more background is needed
+
+Task specs use Single-file SDD and live under `requirements/tasks/`, with sections `Meta`, `1) Requirements`, `2) Design`, `3) Implementation Tasks`, `4) Execution Log / Change Log`.
+
+## What may live here
+
+`requirements/` holds two record types and nothing else: a request
+(`REQ-*.md`, one thing the customer asked for) and a task spec (`TASK-*.md`, one
+unit of work). Anything that is not one of those two belongs to another layer,
+and the rules below say which.
+
+### The tense test
+
+To tell whether something belongs here:
+
+> `requirements/` is written in the future tense. The living spec is written in
+> the present tense.
+>
+> A sentence that will still be true after this work is finished does not belong
+> in a task spec - it belongs in `docs/spec/asgard/<module>.md`.
+
+A task spec stops being read once it reaches `done`. Anything durable left
+inside one stays on disk and is never opened again. This is the most common way
+knowledge is lost in this repo.
+
+### One fact, one home
+
+Every fact has exactly one home. Everywhere else links to it.
+
+When you are about to copy a paragraph from another file, link instead. Two
+copies drift, and once they disagree the reader cannot tell which is current.
+
+| if it is... | it lives in | not here, because |
+|---|---|---|
+| what the customer asked for, in their words | `requirements/requests/` | this is the one thing that IS here |
+| one unit of work, with acceptance criteria | `requirements/tasks/` | likewise |
+| how the system behaves today | `docs/spec/asgard/<module>.md` | a task spec is unread after `done` |
+| why a choice was made | `docs/decisions/YYYY-MM-DD-<topic>.md` | dated and immutable; a rationale inside a task disappears with it |
+| raw discussion, before it converged | `docs/meeting-notes/YYYY-MM-DD-<topic>.md` | pre-decision material is not a requirement |
+| a question with no answer yet | `docs/open-questions.md` | a question buried in a spec vanishes at `done`, and `asgard-cli question` reads that file |
+| customer API docs, manuals, schema dumps, ERDs | `references/` | a spec that inlines the whole of an API's documentation stops being readable as a spec |
+| how to edit this repo - layout, CR field traps, gates | `AGENTS.md` | different question, different reader |
+| domain knowledge the running agent needs | `assets/skills/<skill>/SKILL.md` | it has to be synced to the platform, or the agent cannot see it at all |
+| any password, token or key | `.env` (gitignored) and the release's own Secret on the platform | everything here is committed, and git history keeps what you delete |
+
+The last two go wrong most often. Runtime knowledge left in a
+spec produces an agent that looks like it is ignoring instructions, and a secret
+in a commit is fixed by rotating the credential, not by deleting the line.
+
+### Provenance, on every claim about the customer's systems
+
+A statement about a real system records how it was established and when:
+
+    read off the running database on 2026-09-04
+    from the vendor's PDF, dated 2024, not verified
+    the customer said so in the 2026-09-01 meeting
+
+Without that, a reader cannot tell an accurate fact from a three-year-old guess.
+Write "not verified" when it was not verified.
+
+### No orphans, and no silent contradictions
+
+  - Every `REQ-*.md` and `TASK-*.md` appears in its index, and every task names
+    the request it came from. Anything reachable only by listing the directory
+    will not be read.
+  - A task that changes behaviour is not `done` until the delta is applied to
+    the living spec. A task that settles a question is not `done` until the
+    decision has its own dated record.
+  - When a new record contradicts an older one, supersede it instead of editing
+    it: say which one wins and why. Both are kept, so the reader sees the order.
+    Decision records follow the same rule, because the change of mind is itself
+    information.
+
+`asgard-cli check` enforces the mechanical part of this: the living spec's module
+index matches the files on disk, dated filenames are well formed, and every
+relative link inside `docs/` resolves. The rest is checked by reading. For any
+new paragraph here, ask: will this still be true when the task is done? If so,
+move it out of the task.
+
+Status values: `draft`, `ready`, `in-progress`, `done` (never `in_progress`).
+
+> This repo deploys Kubernetes custom resources via Helm, one chart per project under
+> `projects/<project>/chart/app`. "Design" and "Implementation Tasks" describe CR/Helm/agent
+> changes (e.g. `Agent`, `SemanticLayer`, `DataConnector`, `SkillSet`, `SourceSet`, `Syncer`,
+> `.asgard-pipeline.yaml`, platform variables), not UI or application source code.
+>
+> The databases are real and the current architecture is read-only — a spec that adds a
+> `SemanticLayer`/`DataConnector`, widens which cubes an agent may query, or re-introduces a
+> write path must say so explicitly. See `docs/spec-driven-development.md`.
+
+> A task spec is a work item, not the spec of record. It stops being read once it reaches
+> `done`; the living spec is what the next person reads. So a task that changes behaviour is not
+> done until its delta is applied to `docs/spec/asgard/<module>.md`, and a task that
+> settles a decision writes `docs/decisions/YYYY-MM-DD-<topic>.md` for it.
+> See `docs/README.md` for the four-layer model.

@@ -1,0 +1,31 @@
+# .asgard-cli.yaml
+#
+# Which platform objects this checkout deploys through. Written by
+# `asgard-cli init`, `asgard-cli workspace use` and `asgard-cli pipeline use`, and
+# committed: whoever clones this repository, and whatever agent works in it,
+# should not have to be told again.
+#
+#   asgard-cli workspace show    which workspace is in effect, and why that one
+#   asgard-cli pipeline show     what the pipeline reads as its declaration
+#
+# THE PLATFORM NEVER READS THIS FILE. A run reads the declaration at the
+# pipeline's config path and the chart it names; nothing here can make one
+# succeed or fail. It exists so that the commands below need no --workspace.
+#
+# BOTH FIELDS ARE REQUIRED, and neither is derived. Nothing on disk implies
+# which workspace or which pipeline, and nothing is guessed from a candidate
+# list even when it holds exactly one - a command with nothing recorded lists
+# what there is and stops. Which releases exist, which keys they take and when
+# they deploy are all in .asgard-pipeline.yaml, which is the declaration and the
+# only file that decides anything.
+#
+# THE ONE THING THIS CANNOT CATCH is a copy. Nothing here is checked against the
+# git remotes: a repository may have several, and which one somebody calls
+# "origin" says nothing about what it deploys. So if this file is copied into
+# another repository of the SAME workspace, along with everything else, the
+# commands will act on the pipeline named here and nothing will say otherwise.
+# Copied into a different workspace it fails, because the pipeline is not there.
+# After copying a repository, run `asgard-cli pipeline use <id>`.
+
+version: 1
+workspace: "1899071026088644608"

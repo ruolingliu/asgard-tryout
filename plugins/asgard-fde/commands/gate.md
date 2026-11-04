@@ -1,0 +1,49 @@
+---
+description: The acceptance gate. One command, before every tag.
+---
+
+```bash
+asgard-cli gate
+```
+
+A repository of CRs has no compiler, so the check an agent runs after every edit
+is one command whose definition lives in the binary. Run it and read what it
+reports; this file does not list a step count.
+
+It runs, in order: `tools`, `repo`, `shipped`, `binding`, `skills`,
+`extensions`, `lint`, `render`, `verify`. A skip is printed differently from a pass: the steps that
+need the platform report as skipped when there is no session. A skipped step
+did not pass.
+
+What it cannot reach needs a cluster, and
+`.agents/skills/asgard-platform/guide/verify.md` says what that is. The
+authority is the plan:
+
+```bash
+asgard-cli pipeline runs watch --release <name> --ref <tag>
+```
+
+Read the warnings as well as the exit code. A warning here is a condition that
+is correct now and fatal once somebody tags:
+
+- no Syncer - the rollout fires the Syncers this release deploys that carry
+  `asgard-ai.com/auto-fire-on-rollout`, and fails when one cannot be fired, so
+  with none there is nothing after the dry run: a succeeded run means helm
+  returned. A production chart runs today with none, which is why this warns
+  rather than fails
+- a CR with no project-environment-id label - it works on the cluster, and
+  its editor opens as a blank canvas. The platform injects the id as
+  `.Values.asgard.projectEnvironmentId` on every run, so the fix is in the
+  template rather than in a value
+- R11, a layer with no consumer - record which kind it is while you still
+  know. Otherwise a later reader may bind it as a tidy-up
+
+Then the review no rule can do:
+
+```bash
+asgard-cli verify --tools
+```
+
+Read every tool description together, the way the model gets them - one list, no
+other context, deciding which answers the question. This catches two
+descriptions that are each accurate and do not say which to prefer.

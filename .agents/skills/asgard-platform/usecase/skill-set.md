@@ -1,0 +1,505 @@
+---
+group: Capabilities and scheduling
+description: getting skills to a deployed agent
+---
+# SkillSet, SourceSet, Syncer
+
+Getting skills to a deployed agent. A SkillSet is three CRs, not one, and
+deployments of different ages wire the three differently.
+
+**Seen in:** one file holding three CRs per skill set in most deployments, and
+several skill sets sharing one store in an older one.
+
+**Checked:** against both shapes and the CRD, and the 1:1:1 shape
+in every deployment that converted to it on 2026-09-13, each Syncer
+carrying both labels below. How a SkillSet reaches a sandbox against
+asgard-core `478cf5d6` `internal/bpoperator/reconciler/sb_reconciler.go`; what
+`searchPaths` means against asgard-kube `3da0365` `crd/asgard-ai.com_skillsets.yaml`.
+How a searchPath resolves against asgard-agent-sandbox `9bda069c`:
+asgard-agent-sandbox `internal/skill/discover.go` (`rootsForSet` joins each path
+to the SkillSet's mount, `walkRoot` walks it for every `SKILL.md`), and against
+asgard-core `ed72bce2`: asgard-core `internal/bpoperator/reconciler/sb_reconciler.go`
+mounts the whole SourceSet for each SkillSet, and
+asgard-core `internal/processor/driverloop/localplugin.go` (`buildPluginJSON`)
+hands the CLI exactly the directories those `SKILL.md` files are in.
+
+**Unchecked:** a parent-directory searchPath has not been observed on a running
+sandbox; every SkillSet on the platform's dev cluster names one skill per path.
+
+Read the platform side first: `../wiki/tools.md` covers how MCP Server, Skillset
+and Plugin differ. This page assumes you have read it.
+
+What has to come from the customer before any of this can be built is in
+`../needs/skill-set.md`.
+
+## When this shape, and when not
+
+Decide design time or runtime first; they are not interchangeable.
+
+| | `.agents/skills/<skill>/SKILL.md` | `assets/skills/<skill>/SKILL.md` |
+|---|---|---|
+| read by | the coding agent working in the repo | the deployed agent, at runtime |
+| when | while authoring CRs | while answering a user |
+| delivery | straight from the working tree | commit -> SourceSet -> SkillSet -> bound by Agent or SandboxBlueprint |
+| reaches the cluster | never | yes, that is the point |
+| can reach | the laptop it runs on - `.env`, and any network path the FDE has | the sandbox's own environment, which is a closed list the reconciler builds |
+
+The last row decides the design; the others are bookkeeping.
+A runtime skill can do what a Workflow cannot - a non-HTTP protocol, a vendor
+CLI, an API too large to enumerate as tools - and cannot hold a static service
+key, so that route is open only when the credential arrives per turn from the
+caller. `../usecase/external-api.md` is the argument and the fields it was read
+off; do not re-derive it from a design-time skill that reads `.env`, which is a
+property of running on a laptop.
+
+Everything below is about the second kind. A skill in the first kind needs no CR
+at all.
+
+## The shape
+
+    SourceSet  ss-<name>     the store. members are directories in it.
+      <- Syncer  syn-<name>  fills one member. syncerClass git / database / web.
+    SkillSet   sk-<name>     sourceSetName + searchPaths, the directories searched
+      <- Agent.managed.skillSetNames, or SandboxBlueprint.skillSetNames
+
+## One SourceSet per SkillSet
+
+`platform-api`'s `POST /v1/skill-set/from-git` creates a SkillSet plus its own
+SourceSet plus the git Syncer, bound 1:1:1, and the Platform UI reads that
+structure. Keep one file per skill set holding all three CRs separated by `---`.
+
+The Syncer writes to `destinationPath: "git/"`, trailing slash included, and
+a searchPath is then `git/skills/pdf/`. The SourceSet declares no members;
+the paths its Syncers write to are exactly what is in it.
+
+`destinationPath`, `statePath` and `sourceSetName` are immutable, so a Syncer
+never writes somewhere else: that is a new Syncer and a deleted one, and the
+apiserver refuses the edit. `repoUrl` is not immutable, so "sync from that
+repository instead" is an edit to the existing Syncer.
+`../wiki/crd-rules.md` lists the Syncer's immutable fields.
+
+> Two older shapes appear in charts that have not been touched recently.
+> Do not copy either; the first one does not apply:
+>
+> - `members:` on the SourceSet, with `destinationMemberKey` / `stateMemberKey`
+>   on the Syncer. The two halves are not in the same state. `members:` is
+>   gone from the SourceSet - its spec carries `apiKey`, `contextIndex` and
+>   `labels` and nothing else - so a chart setting it loses the field silently.
+>   The Syncer's two key fields still exist, marked deprecated and kept "so
+>   pre-rename Syncer objects stay readable during the transition", so one set
+>   there does apply. Write `destinationPath` and `statePath`; the old pair is
+>   readable, not usable.
+> - One SourceSet shared across several skill sets, sliced apart with
+>   searchPaths, for a skill set that is its own unit. Changed away from on
+>   2026-08-28: it leaves the Platform UI
+>   unable to find a skill set's git config, so it renders as a skill set with no
+>   source. It is a UI failure, not a runtime one, so it goes unnoticed.
+
+### A store somebody writes into needs its own, with no Syncer on it
+
+Do not write into a SourceSet that has a Syncer. Every run of a git Syncer
+re-fills the paths it owns, so a file put there by anything else is overwritten
+or removed on the next sync, and with a Syncer on a 30-minute schedule that is a
+silent loss rather than a visible conflict. So a store that both a Syncer and
+somebody else writes into cannot be one SourceSet, however much the contents
+look alike.
+
+The shape read off a running deployment is two SourceSets with the same skills
+in them for different reasons:
+
+    ss-git-repos        members filled by Syncers from git. Read-only in
+                        practice, whatever the CRD allows
+    ss-brand-skills     no members, no Syncer, written through the Edge
+                        Server's SourceSet volume API at a path the writer
+                        chooses - there, `brands/<brand>/skills/<skill>/<rev>/`
+
+The revision directory is the other half. Each write goes to a new
+`<rev>/`, so a path is written once and afterwards only read or deleted; the
+parent directories are created by the write itself, which is why that SourceSet
+declares no members either. Without that, two writers land on one path and the
+reader gets whichever finished last.
+
+Do not rename it: the service writing into it holds the SourceSet name in its own configuration,
+so renaming the CR silently breaks every route that writes to it.
+
+The mechanism: a Syncer runs as a CronJob of a separate `asgard-syncer` image
+with the SourceSet's whole volume mounted (asgard-core `478cf5d6`
+asgard-core `internal/bpoperator/reconciler/syn_reconciler.go`), and what happens to a file
+somebody else writes under its `destinationPath` depends on the class:
+
+    git                         removed on the next run; it checks the
+                                revision out in place and runs `git clean
+                                -ffdx`. A file the repository's .gitignore
+                                matches survives until the remote moves
+    googleDrive, oneDrive,      removed on the next run; `rclone sync
+    dropbox, ftp, sftp, smb     --delete-after` mirrors the source
+    database, bot, web          kept; they add files and delete none
+    static-content              kept; it writes the one file that is its
+                                destinationPath, only when that file differs
+                                from its text, and touches nothing else
+
+So a synced store is the source's, not a place to write, for the first two
+groups. Every class also writes `statePath` when one is set, the one file it
+writes outside `destinationPath`.
+
+**Checked:** against a production deployment's
+`source_set/brand_skills.yaml`, whose own comment forbids reusing the
+Syncer-backed SourceSet and cites that deployment's own service requirement for
+it. The class table against asgard-syncer `8d278689`
+asgard-syncer `internal/syncer/git.go` (`syncIncremental`, `worktreeDirty`, `materialize`), `internal/utils/rclone.go`
+(`buildRcloneSyncArgs`), and asgard-syncer `internal/syncer/database.go`, `bot.go` and
+`web.go`; the static-content row against asgard-syncer `e7df07f`
+asgard-syncer `internal/syncer/staticcontent.go` (`syncStaticContent`).
+
+### The one place a shared store is right
+
+A Plugin bundle is the exception, and it is deliberate rather than a chart
+that was never updated. A deployment carrying 29 Plugins keeps one
+`ss-skill-repos` and lets each bundle's SkillSet slice it with `searchPaths`,
+because the skills all live in one repository and one SourceSet per bundle
+would be 29 clones of it.
+
+That shape accepts the UI cost: those SkillSets carry no
+`skill-set-name` annotation and no `managed-by` label, so they are not presented
+as first-class skill sets in the UI at all; they are implementation detail of a
+Plugin. See `../usecase/plugin.md`.
+
+The 1:1:1 rule stands for anything a person picks in the UI. The exception is
+for a shared skills monorepo behind a bundle, not for convenience.
+
+## Generate it
+
+    asgard-cli add skillset <name> --repo <git url>
+
+That writes the structure below with the fields that fail silently already in
+place - the display annotation, the labels the UI needs, the current field names.
+Those get lost when the skeleton is copied by hand, and nothing reports them
+missing: not helm lint, not CRD validation, not a server dry-run.
+
+The generated file marks the judgement calls TODO, and the rest of this page
+covers them.
+
+## The skeleton
+
+One file per skill set, `templates/skill_set/sk-<name>.yaml`, holding all three
+CRs separated by `---`.
+
+```yaml
+apiVersion: asgard-ai.com/v1alpha1
+kind: SourceSet
+metadata:
+  name: ss-sk-<name>
+  annotations:
+    asgard-ai.com/source-set-name: "<display name>"
+  labels:
+    # Hides the Syncer from the generic list and is what the platform cascades
+    # on when the SkillSet is deleted. Needed on both CRs.
+    asgard-ai.com/managed-by: skill-set
+    {{- include "<chart>.labels" . | nindent 4 }}
+spec:
+  apiKey:
+    valueFrom:
+      secretKeyRef:
+        name: {{ include "<chart>.appSecretName" . }}
+        key: asgard_resource_api_key
+---
+apiVersion: asgard-ai.com/v1alpha1
+kind: Syncer
+metadata:
+  name: syn-sk-<name>
+  annotations:
+    asgard-ai.com/syncer-name: "<display name>"
+  labels:
+    asgard-ai.com/managed-by: skill-set
+    # Scheduler off; the deploy's apply step fires it once, which needs both.
+    asgard-ai.com/syncer-suspend: "true"
+    asgard-ai.com/auto-fire-on-rollout: "true"
+    # Fired and not waited for: a failed sync shows in the SkillSet's
+    # executions, not in the run.
+    asgard-ai.com/auto-fire-on-rollout-wait: "false"
+    {{- include "<chart>.labels" . | nindent 4 }}
+spec:
+  sourceSetName: ss-sk-<name>
+  # A relative path inside the volume. The trailing slash is load bearing:
+  # every syncer class decides "this is a directory" from it, and without one
+  # the CRD rejects the resource outright.
+  destinationPath: "git/"
+  syncerClass: git
+  schedule: "0 */6 * * *"
+  timeZone: Asia/Taipei
+  git:
+    repoUrl: "https://github.com/<org>/<repo>.git"
+    # A public repo: pin main. This repo, private: pin the release tag, which
+    # means the tag has to exist before the Syncer can find its commit.
+    revision: "main"
+    # Only for a large repository: the folders to sync, relative to its root.
+    # includePaths:
+    #   - skills/pdf/
+    # auth only for a private repo
+    auth:
+      type: http
+      username:
+        value: "git"
+      password:
+        valueFrom:
+          secretKeyRef:
+            name: {{ include "<chart>.appSecretName" . }}
+            key: asgard-github-pat-password
+---
+apiVersion: asgard-ai.com/v1alpha1
+kind: SkillSet
+metadata:
+  name: sk-<name>
+  annotations:
+    asgard-ai.com/skill-set-name: "<display name>"
+    asgard-ai.com/skill-set-description: "<what these skills cover>"
+  labels:
+    {{- include "<chart>.labels" . | nindent 4 }}
+spec:
+  sourceSetName: ss-sk-<name>
+  searchPaths:
+    # Each path is searched recursively for SKILL.md. One path per skill keeps
+    # the set explicit; a parent directory loads every skill under it.
+    - git/skills/pdf/
+    - git/skills/docx/
+```
+
+The skill files themselves live in `assets/skills/<skill>/SKILL.md` when they
+come from this repo, with `name` in the frontmatter matching the directory.
+
+## Designing a skill - the part the generator leaves TODO
+
+### What belongs in a runtime skill
+
+Domain knowledge the CR vocabulary cannot carry: what a status code actually
+means in this business, how two systems' entities correspond, which of two
+similar figures people mean, the operating procedure for a task.
+
+Not anything expressible as data or as a tool. A skill that says "call the
+API and read the third field" should have been a tool.
+
+Not what the tools already say either. The agent reads this skill and the
+`tooling.description` of every tool it was given in one context, so a skill
+describing the transport a tool now hides - the base URL, the header, the field
+that needs a second parse - instructs the model to do something it cannot.
+`../wiki/tool-description-and-skill.md` is which of the two owns a fact, and the
+short form is that the skill does: it is per subject where a description is per
+tool.
+
+### The description is the loading decision
+
+An agent decides whether to load a skill from its `description` alone, so write
+it as a trigger condition, not a summary:
+
+    ✗ 關於庫存管理的知識
+    ✓ Use when the user asks about stock levels, reorder points, or why a
+      figure differs between two systems.
+
+When two skills compete for the same words, the description is not enough. In
+one deployment's test, rewriting both descriptions to match the question word
+for word still loaded the wrong skill; a routing rule in the supervisor's prompt
+fixed it.
+
+### Do not ship an empty skeleton
+
+A skill directory with a heading and no content produces an agent that has been
+told a capability exists and then finds nothing. One deployment ended up
+declaring in the description that the skill was incomplete and must not be
+used. Create the skill when there is knowledge to put in it.
+
+### Dependencies are not resolved for you
+
+If one skill only works when another is also bound, the platform does not
+detect that. Say it in the frontmatter, and make sure every consumer binds
+both - a SkillSet lists paths, nothing more.
+
+## Fields that are not obvious
+
+A searchPath is a directory the sandbox searches recursively for `SKILL.md`,
+and every skill it finds loads; an empty list searches the whole SourceSet. So
+`git/skills/pdf/` loads one skill and `git/skills/` loads every skill in that
+directory, including one the repository gains later and any `SKILL.md` nested
+inside another skill. A path that does not exist loads nothing, and nothing
+reports it beyond a line in the sandbox's log.
+
+Which to write is a choice. One path per skill keeps the set explicit: a skill
+added to the repository is not loaded until somebody lists it. A parent path
+follows the repository. Not checkable from the CR either way - the symptom of a
+wrong path is an agent with fewer or more skills than expected.
+
+### A large repository: `includePaths`
+
+When the skills are a few folders of a large repository - `anthropics/skills`,
+of which a SkillSet uses `skills/pdf/` - list those folders in
+`git.includePaths`:
+
+```yaml
+  git:
+    repoUrl: "https://github.com/anthropics/skills.git"
+    revision: "main"
+    includePaths:
+      - skills/pdf/
+      - skills/xlsx/
+```
+
+Only those folders are downloaded, written into the destination and kept in
+its `.git`: the checkout becomes a partial clone with a cone-mode sparse
+checkout. Absent or `[]` syncs the whole repository.
+
+- An entry is a folder relative to the repository root, not to the volume:
+  `skills/pdf/`, not `git/skills/pdf/`. The folder keeps its place, so the
+  searchPath is still `git/skills/pdf/`. The CRD holds an entry to the
+  destinationPath rules, checks `.` and `..` per segment rather than as a
+  substring, and refuses a `.git` segment.
+- Cone mode also writes the files directly in the repository root and directly
+  in each parent folder of an entry: `skills/pdf/` brings the root `README.md`
+  and the files directly in `skills/`, and not `skills/docx/`.
+- An entry the revision does not have, or one that is a file, fails the run, and
+  the destination stays as the last sync wrote it.
+- The field is edited in place. The next run converges without cloning again:
+  an added folder is downloaded, a dropped one is deleted from the destination,
+  and an empty list turns the checkout back into the whole repository.
+- A searchPath beside every included folder loads nothing, and the platform
+  does not compare the two lists. `asgard-cli gate` does. A searchPath at or
+  above an included folder still reaches the skills in it.
+- `git log -p`, `git show` and `git diff` run inside the checkout - by an agent
+  with a shell in the sandbox - fetch the missing contents from the repository,
+  and for a private repository that fails, because its credentials are not in
+  the volume.
+- A git server without partial-clone support still serves the sync: it sends
+  everything, and the destination still holds only the listed folders.
+
+**Checked:** against asgard-kube `1652e80` `pkg/apis/asgard/v1alpha1/types.go`
+(`GitSyncerSpec.IncludePaths`) and asgard-syncer `e2fd2c8`
+asgard-syncer `internal/syncer/git_sparse.go` (`syncIncrementalSparse`,
+`validateIncludePaths`, `convertToComplete`), and on the platform's dev cluster
+on 2026-10-19, where a running Syncer's list was switched to another folder,
+pointed at a folder that does not exist, and cleared.
+
+`asgard-ai.com/managed-by: skill-set` goes on the SourceSet and the Syncer
+in the 1:1:1 shape. It hides the Syncer from the generic list, and it is what the
+platform cascades on when a SkillSet is deleted.
+
+`destinationPath` and `statePath` are relative paths inside the volume, and
+the CRD enforces the shape: no leading `/`, no `.` or `..` segments, no `//`.
+`destinationPath` must end with `/`; `statePath` must not.
+
+A git Syncer needs no `statePath`. It follows `revision`, and what it writes
+there - the revision and the commit it checked out - is a record nothing reads
+back; the incremental cursor belongs to a database syncer's
+`isMaxValueColumn`, and it lives in the Syncer's status.
+
+`revision` decides what a private repo syncs:
+
+```yaml
+    revision: {{ .Chart.AppVersion | quote }}   # this repo, private: needs the release tag
+    revision: "main"                            # a public repo, or one not tied to releases
+```
+
+Pinning `AppVersion` means the tag must be pushed before the Syncer can find
+its commit, because only CI stamps the release tag into `appVersion`. It is
+also why a local `helm upgrade` breaks the Syncer: the placeholder version
+renders as a git ref that does not exist.
+
+Set auth only for a private repo. A public one carries no `auth` block and needs
+no `asgard-github-pat-password` declared. Adding a private source adds that key -
+under `appSecret:` in `.asgard-pipeline.yaml`, and then set on the platform.
+
+```yaml
+    auth:
+      type: http
+      username: {value: "git"}
+      password:
+        valueFrom:
+          secretKeyRef: {name: ..., key: asgard-github-pat-password}
+```
+
+The username is a constant, not a secret. The PAT in `password` is what
+authenticates, so `value: "git"` is written literally and a private repo costs
+exactly one declared key. One reference deployment reads the username out of
+the release Secret as well, under `asgard-github-pat-username`; that chart works
+and needs no change, but it is a second key to declare, set and rotate for a
+value that never varies, so do not copy it into a new one.
+
+## Two labels, and neither reads the other
+
+The rule is in `../wiki/knowledge.md`. This section covers its effect on this
+shape, and what `add` writes to handle it.
+
+    asgard-ai.com/syncer-suspend: "true"             stops the SCHEDULER, and nothing else
+    asgard-ai.com/auto-fire-on-rollout: "true"       the deploy fires it once
+    asgard-ai.com/auto-fire-on-rollout-wait: "false" and does not wait for it
+
+What `add` writes sets `syncer-suspend: "true"` and lets the deploy fire each
+Syncer once - sync timing is tied to deploys on purpose. That takes both labels.
+It also sets the third, so a run succeeds whether or not the sync did; read
+the SkillSet's executions after a deploy, below. Removing the third makes the
+run wait and fail with the sync, which `../wiki/knowledge.md` weighs.
+`../wiki/knowledge.md` says what suspending costs a git Syncer, and why one
+deployment schedules its skills Syncers instead.
+The platform's apply step fires only the Syncers of this release that carry
+`auto-fire-on-rollout`, and firing works fine against a suspended CronJob.
+
+A suspended Syncer with no auto-fire label never runs on its own. Nothing
+reports it: the chart renders, the apiserver accepts it, the gate is green, the
+run succeeds, and the agent has zero skills. `asgard-cli add skillset` writes
+both labels; a Syncer written by hand is where this goes wrong.
+
+The label is read off the applied manifest, so off the CR. The reconciler
+copies only `syncer-name` onto the derived CronJob, so anything that goes
+looking for these labels on the CronJob silently finds nothing.
+
+An older chart reads back-to-front because the polarity flipped.
+Firing on deploy used to be the default, opted out of per Syncer with
+`asgard-ai.com/syncer-cd-trigger: "false"` - a label the platform does not
+read at all, left behind by the GitHub Actions workflows that predate the
+pipeline. In a repo that still deploys through its own CD it still means
+something; in one deployed by `asgard-cli pipeline` it means nothing, and the
+label that matters is the opt-in one above.
+
+## Whether a deploy fails with no Syncer
+
+The platform decides this now, not an `if` in your own workflow. The
+apply step fires what carries the label and waits for it, so with nothing to
+fire there is nothing after the dry run that proves the platform accepted any of
+it. That is why `asgard-cli gate` warns at zero Syncers, and why a succeeded
+run then only means helm returned. A project whose only skills are design-time still
+wants one.
+
+## Verify
+
+```bash
+asgard-cli check     # frontmatter name matches the directory
+asgard-cli verify <project>
+```
+
+The xref check resolves `sourceSetName`, confirms every `searchPath` falls under
+a declared member, that a SourceSet backs at most one SkillSet, and that
+`managed-by` is on both CRs.
+
+Neither shows which skills a searchPath resolves to, because that depends on
+what the sync wrote, not on the CRs. It shows up only as an agent with fewer or
+more skills than expected, so check after the first sync, by listing what the
+sync wrote under each searchPath:
+
+```bash
+asgard-cli operate skill-set ls <skill-set> <searchPath> --release <release>
+```
+
+After a deploy, confirm the fire in the apply step's log:
+
+```bash
+asgard-cli pipeline runs log <run-id> apply
+```
+
+Its syncers section lists what was fired. No section, or zero Syncers opted in,
+means the auto-fire label is missing. A Syncer marked `(not waited)` there was
+started, and the run says nothing about whether it synced. `kubectl get job` is
+not a check: the Job is deleted an hour after it finishes, and the CronJob's
+last-schedule column stays empty for a fired run. The Syncer's own history
+keeps the outcome after the Job is gone, and is read through the SkillSet:
+
+```bash
+asgard-cli operate skill-set executions <skill-set> --release <release>
+asgard-cli operate skill-set sync <skill-set> --release <release> --wait <duration>
+```

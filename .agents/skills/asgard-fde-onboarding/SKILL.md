@@ -1,0 +1,143 @@
+---
+name: asgard-fde-onboarding
+description: Use FIRST when working in this repo - it routes you to the right command, skill and document for whatever you are about to do, and states the rules that hold at every stage. Covers starting an onboarding, splitting the work into projects, wiring up a customer database, writing Asgard custom resources, and running the acceptance gate.
+---
+
+# Onboarding
+
+> Design time. This skill is for the coding agent working in this repo. It is
+> never synced into the platform. Skills the deployed agent uses at runtime
+> live in `assets/skills/` and reach the cluster through a `SkillSet` - a
+> separate mechanism. Do not confuse the two.
+
+This repo defines the Asgard custom resources (`asgard-ai.com/v1alpha1`) for
+one customer, one Helm chart per project, each deployed to its own namespace.
+There is no application source code.
+
+## Start here, every session
+
+```bash
+asgard-cli question      what nobody has answered yet, and who each is with
+asgard-cli request       what the customer asked for and is not done
+asgard-cli task          the task specs that are open
+asgard-cli project       what each chart declares, and what its shape lacks
+```
+
+Each reads one file the repository keeps, or the CR kinds a chart declares,
+from the repository itself, so all four stay right when something was done
+by hand. Each takes `--format json`.
+
+Read the questions first, and do not design past one of them.
+
+No command here says where the onboarding is. An onboarding is not linear:
+expensive decisions are often made, built, and reversed after contact with
+reality, so a position derived from the earliest missing CR kind is misleading.
+
+Form your own view of where things stand, and look up the guidance by
+subject:
+
+```bash
+grep -ril "<what you are actually deciding>" ../asgard-platform/
+```
+
+That searches the platform wiki, the deployment shapes, the decision guidance and
+the skills together, so "how is the read path decided" reaches the material that
+covers it. None of it is a step: `asgard-cli guide` lists every piece of it,
+and any one can be read at any time.
+
+Do not reproduce what any of it says. Run it and read it: the guidance is
+versioned with the tool, while a copy pasted into a transcript goes stale.
+
+## Where the material is
+
+A map of what answers what, in no particular order.
+
+| what you are doing | where to look |
+|---|---|
+| this checkout is not connected to a platform yet - no `.asgard-cli.yaml`, or `asgard-cli gate` reports the binding step as skipped | `AGENTS.md`, "If this checkout is not connected to a platform yet". Do this first; `asgard-cli init` leaves it for you on purpose |
+| about to talk to the customer | `../asgard-platform/brief/customer-meeting.md` - what gets said wrong to a customer, each entry because somebody said it. What is said in a meeting leaves no trace in this repo, so nothing in the repo will remind you |
+| about to touch a chart, or hand it over | `../asgard-platform/brief/write-chart.md`, `../asgard-platform/brief/handover.md` |
+| anything, first | `asgard-cli question`, then `request`, `task` and `project` |
+| the customer said something and you have to turn it into work | `../asgard-platform/guide/requirements.md` - the interview, then `asgard-cli request add "<their words>"` |
+| looking something up | `grep -ril "<term>" ../asgard-platform/` - and read `../asgard-platform/aliases.md` first if the question came in the customer's own words |
+| about to write a CR | `../asgard-platform/usecase/<shape>.md` - the skeleton and its traps |
+| what a thing on the platform even is | `../asgard-platform/wiki/<page>.md` - read this before the extract, which assumes it |
+| how to change this repo - layout, conventions, CRD traps | `AGENTS.md` |
+| what the system currently does | `docs/spec/asgard/` |
+| why something was decided | `docs/decisions/` |
+| reading a customer's own system - list tables, check a column's real values, verify a join | `db-query` skill. Read-only, and it names the one `DataConnectorClass` it cannot drive |
+| turning what you found into a `SemanticLayer` or `DataConnector` | `semantic-layer-modeling` skill |
+| the customer names an external system - Google Drive, NetSuite, Intercom, an ERP | `asgard-cli extension search <system>` first. When an Extension teaches it, `asgard-cli extension get <id>` puts it in `.agents/skills/<id>/`; load its `SKILL.md` and follow it, starting with which route to take. When there is none, connect the system with `../asgard-platform/` alone. `asgard-cli extension status` says which Extensions this repository already holds. Where an Extension is wrong or missing something, `asgard-cli extension issue-report <id>` reports it; do not edit the copy |
+| somebody has to give you a credential | `asgard-cli local-env` - opens a form for them to type it into. Never ask for a password in the conversation |
+| `asgard_resource_api_key`, the platform resource key a `SourceSet`, `Toolset` or `BotProvider` reads | nobody gives it to you, so do not ask. It is this release's own: declare it under `appSecret:` and, when no use case calls the resource from outside the platform, set a random value yourself before the first deploy - `asgard-cli pipeline variables set --release <r> --kind secret asgard_resource_api_key --random`. Never `preset-agent-hub`, which is Agent Hub's own. `.agents/skills/asgard-platform/usecase/conventions.md` has when a caller needs the value |
+| a CR needs a credential at runtime - a database password, a channel token | declare its key under `appSecret:` in `.asgard-pipeline.yaml`, then `asgard-cli pipeline variables set --release <r> --kind secret <key> --from-file <path>`. Do both; with only the second, the value is stored and never injected, and lint, render and the dry run all pass while the CR resolves to nothing. `asgard-cli add` prints the keys it wrote. A non-secret runtime value goes the same way through `appConfigMap:` |
+| a release has deployed and a Syncer has to run now, or you need to know whether its first run succeeded | `asgard-cli operate syncer sync <syncer> --release <r>` and `asgard-cli operate syncer executions <syncer> --release <r>`; a SkillSet's Syncer goes through `asgard-cli operate skill-set` |
+| a release deployed an `OAuthCredential` - a Google Drive, OneDrive or Dropbox Syncer, or a Workflow, reads one - and it has no token yet | `asgard-cli operate oauth-credential authorize <name> --release <r>`, then `asgard-cli operate oauth-credential status <name> --release <r> --wait 10m`. Say whose account has to sign in when handing the link over: that account decides whose data the Syncer reads |
+| a document the customer handed over has to go into a drive, or you need to see what a Syncer actually wrote | `asgard-cli operate source-set put <source-set> <local-file> <path> --release <r>`, and `ls` / `cat`; a SkillSet's files through `asgard-cli operate skill-set ls`. Never under a Syncer's `destinationPath`: a git Syncer empties it on every run, and the file-store classes mirror their source |
+| an Agent or a flow agent has to be tried after a deploy, or a Trigger's run stopped to ask a question | `asgard-cli operate chat send agent/<name> "<question>" --release <r>` (or `workflow-set/<id>`, `trigger/<name> --invocation <id>`), then `asgard-cli operate chat reset agent/<name> --release <r>` when done: a preview holds a sandbox, and it is the member's Console preview too |
+| a Trigger has to be tested without waiting for its schedule, or a context index refreshed now | `asgard-cli operate trigger fire <trigger> --release <r> --wait 5m`, then `asgard-cli operate trigger runs` and `logs`; `asgard-cli operate source-set reindex <source-set> --release <r>` and `index-runs` |
+| before committing anything under `projects/*/chart` or `assets/` | `asgard-cr-verification` skill (`asgard-cli skill update` writes it) |
+| work that needs a spec before implementation | `spec-workflow` skill |
+| a slide deck for the customer | `proposal-deck` skill |
+| a web page the person has to watch or take over - an external system's admin console, an Extension's `setup/` | `desktop-browser` skill on this computer; in the Workbench assistant's sandbox (`ASGARD_SANDBOX_MODE=true`) the sandbox's built-in `browser` skill instead |
+| any 繁體中文 the customer will read - a slide, a reply to their question, a cube `description`, an agent's prompt | `plain-chinese` skill. Load it for the second pass, not while drafting |
+| registering a new project | `asgard-cli project add <slug>` - it writes the chart skeleton too |
+| the repo has drifted: contradictions, stale claims, a term nobody owns | `knowledge-base` skill, after `asgard-cli check` |
+
+## The question behind the three big decisions
+
+The read path, the entry point, and where unstructured knowledge lives all
+follow from one question:
+
+> Who is on the other end - an internal caller that can authenticate, or an
+> anonymous visitor?
+
+An internal audience and a public one need different shapes, because of what
+the platform can and cannot do. For each of the three decisions, the obvious
+answer has already been proven wrong in production.
+`../asgard-platform/guide/read-path.md`, `../asgard-platform/guide/entry-point.md`
+and `../asgard-platform/guide/knowledge.md` each state the reversal, and
+`AGENTS.md` has the same three under "The three decisions that get answered
+wrong".
+
+Establish the audience before designing anything.
+
+## Rules that hold at every stage
+
+- Never guess a schema. Connect to the real database and introspect it with
+  the `db-query` skill.
+- Connect the checkout before authoring anything. `asgard-cli init` writes
+  the skeleton with no account and no network, so a repository can exist before
+  the platform does. Until `asgard-cli skill update` has run, nothing in this
+  repo states what this server accepts, and a CR written against an assumption
+  can cost a month.
+- Never ask anybody to tell you a password: not in the conversation, not
+  "paste it and I will remove it after". Treat a credential that has been
+  through a transcript as disclosed. Write the keys you need into
+  `.env` with empty values, then run `asgard-cli local-env`: it opens a form
+  for whoever holds the credential, and tells you only which keys were filled
+  in. Re-read `.env` afterwards: they can add keys you did not ask for, by
+  design.
+- Source systems are read-only until a spec says otherwise. Any write path
+  points outward, never at a source system, and needs human approval.
+- Run the gate before committing anything under `projects/*/chart` or
+  `assets/`, and stop at the first failing step.
+- Write the decision down the day it is settled -
+  `docs/decisions/YYYY-MM-DD-<topic>.md`, saying why the rejected option was
+  rejected. Nobody can reconstruct that reason later.
+- A behaviour change is not done until the delta reaches
+  `docs/spec/asgard/`. A task spec stops being read once it is done; the
+  living spec is what the next person reads.
+
+**Checked:** every command this page routes to exists and answers
+what is claimed, checked by running each. The one platform statement it makes is
+the distinction between a runtime skill under `assets/skills/` bound by a
+`SkillSet` CR and a design-time skill under `.agents/skills/` that only the
+coding agent reads; `SkillSet` is in the contract at asgard-kube `cbd8d70` and
+the two mechanisms are separate, which is why the warning is at the top.
+
+**Unchecked:** the routing itself - which question should reach which command -
+is one engagement's map of its own material, and a reader sent to the wrong page
+reads a correct document that answers a different question. When the material
+has no answer at all, that is worth `asgard-cli issue-report --new`, then
+`--send`, rather than a workaround.

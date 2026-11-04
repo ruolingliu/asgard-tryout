@@ -1,0 +1,1108 @@
+# AGENTS.md
+
+> This file is the single source of truth (SoT) for coding agents working in this repo.
+> `CLAUDE.md` only points here (`@AGENTS.md`) so any agent that reads either file gets the same guidance.
+
+## Repo Context
+
+- **Project**: this repo is where all Asgard custom resources for this engagement are specified, and from which they are deployed.
+- **How work is driven**: spec-driven — `requirements/` is the implementation source of truth (see Spec-Driven Development below).
+- **Kind**: Helm charts only. No application source code — everything is declarative Kubernetes custom resources under `asgard-ai.com/v1alpha1`. (`.agents/skills/db-query/` is a local tool-chain for reading the customer's systems at design time, not deployed.)
+- **Standard Asgard-Kube layout**: each Project is its own Helm chart under `projects/<project>/chart/app`, deployed to its own namespace. Cross-project shared plumbing lives in `assets/`. ("Project" is the generalized unit — a Platform Project == a K8s Namespace.)
+- **Projects**: the table in [`README.md`](README.md) is the list, and it is the only one —
+  it is rewritten from `projects/` and the declaration on every `asgard-cli init` and
+  `asgard-cli project add`, and `asgard-cli check` holds it against the directories that are
+  actually there. What each project does, who calls it and which systems it reads goes in the
+  TODO below, which is yours and is never overwritten.
+
+> TODO — fill this in as the engagement discovers it. What the customer's business systems
+> are, which are read by which project, and any invariant that would surprise the next person.
+> What belongs here is what you need to know to avoid breaking the chart. What the system
+> does goes in `docs/spec/asgard/` instead.
+
+### The invariants worth knowing before you change anything
+
+> TODO. Record them here as they are settled. The ones that hold on day one:
+>
+> - Source systems are read-only. Reads go through a `SemanticLayer` or a fixed query tool.
+>   Any write path points outward (a notification endpoint), never at a source system. Adding a
+>   write path to a source system is a behaviour change that needs a spec.
+> - Nothing is deployed from a laptop. See Deploy / CI.
+
+<!-- asgard-cli:managed:start -->
+<!--
+  Everything below this marker is written by `asgard-cli init` and is replaced
+  on every run, even in a file somebody here has edited. It is the platform's
+  contract, not this engagement's - a correction to it belongs upstream in the
+  CLI, where every engagement gets it.
+
+  Everything ABOVE the marker is yours and is never overwritten: the project
+  descriptions, what the customer's systems are, and the invariants. That split
+  is why this file can be kept current without deleting the answers - see
+  `mergeManaged` and the AGENTS.md section of TASK.md.
+-->
+
+## Where this repo is, and what to do first
+
+`asgard-cli init` wrote this repo. What exists is the platform contract (this
+file), the docs structure, the design-time skills, and an empty chart skeleton
+per project. Everything customer-specific is still to be written, including
+the sections of this file marked TODO.
+
+### What is not the agent's call
+
+Changes inside this checkout can be undone; changes that leave it cannot. A file
+written wrongly is edited. A commit on a shared branch, a tag that triggers a
+run, a platform object created under somebody's workspace and an issue filed on
+somebody's repository are already read by other people by the time anyone
+objects, and taking one back rewrites shared history or leaves a record that a
+revert does not erase.
+
+So ask before doing each of these, as a separate question. The answer to one
+does not answer the next:
+
+- committing, pushing, and merging - three separate questions. Permission to
+  commit is not permission to push.
+- pushing a tag, and approving a run. A tag here is a deployment; the CD
+  ordering traps under Deploy apply only after somebody has decided to deploy.
+- creating anything on the platform - a project, a pipeline, a connection, a
+  release. The name is chosen once and kept, so a name picked in a hurry is one
+  the engagement keeps.
+- filing an issue - on the workspace's Workbench or upstream - or writing
+  anywhere outside this checkout.
+
+No reply is not approval. If you asked and got no answer, the act is still not
+approved, and the next instruction that arrives does not answer the question
+still open. Ask again, or say what is waiting and stop.
+
+The work itself needs no asking: reading, editing files in this checkout,
+running `asgard-cli gate`, `check`, `verify`, `render`, and anything else that
+only reports. The line is whether somebody else can already see it.
+
+### If this checkout is not connected to a platform yet, that is the first job
+
+`asgard-cli init` needs no account and touches no network. The skeleton exists
+before the platform does, so that a coding agent can start work as early as
+possible. Connecting the checkout is left for you.
+
+```bash
+asgard-cli gate      # says exactly what is missing, at any point
+```
+
+While `.asgard-cli.yaml` is absent, the `binding` step reports "not bound to a
+pipeline yet" and the `skills` step reports no session. The `binding` step
+also reports this checkout's `origin`, or that there is none, because that is
+the first branch of the walk below and it decides whether the walk asks a
+question at all.
+
+Read the checklist before running any of it:
+`.agents/skills/asgard-platform/brief/connect.md`.
+
+Every line of the walk below contains a question only the FDE can answer, and
+for each one this tool can appear to have answered it already. Be most
+suspicious of a list with one entry: a workspace with a single pipeline, an
+account with a single connection. That checklist lists those questions, item
+by item, with what each has cost when it was guessed instead.
+
+Then walk the FDE through it:
+
+```bash
+git remote -v                         # origin? then --account and --repo below are
+                                      #   derived from it - do not ask for either
+                                      # none? this is the ONE question to ask:
+                                      #   "what is this repo's git remote URL?"
+                                      #   git remote add origin <url>
+                                      #   git push -u origin <branch>
+                                      # push, not only add: the pipeline reads the
+                                      #   declaration off the default branch, and a
+                                      #   repository with no commits fails its first
+                                      #   config sync
+asgard-cli login                      # opens a browser AND prints the URL
+asgard-cli workspace list             # show it; they choose
+asgard-cli workspace use <id>
+asgard-cli pipeline connections       # none? asgard-cli pipeline connect
+asgard-cli pipeline list              # ask which of these is this engagement's, if any
+                                      #   it is one of them:
+                                      #     asgard-cli pipeline use <id>
+                                      #   it is none of them:
+                                      #     asgard-cli pipeline create --name <n> \
+                                      #       --connection <id>
+                                      #   --repo only when there is no origin to
+                                      #     derive it from; same for --account above
+                                      # both record it in .asgard-cli.yaml; neither
+                                      # follows the other
+asgard-cli pipeline projects          # empty? that is where a new customer starts:
+                                      #   asgard-cli pipeline project create <name>
+asgard-cli skill update               # the CR reference material arrives here
+```
+
+Seven things to know while doing it:
+
+- `asgard-cli login` and `asgard-cli pipeline connect` both open a browser and
+  print the URL. Let them open it - the person is at this machine. The printed
+  URL is the fallback for when nothing opened, and it is printed every time so
+  that recovering needs no second run; hand it over then. `--no-browser` is for
+  a machine with no desktop at all, not for a machine you are borrowing.
+  In the platform's Workbench assistant sandbox (`ASGARD_SANDBOX_MODE=true`)
+  neither opens anything: there is nothing to log in to, and
+  `asgard-cli pipeline connect` prints a link and ends. Give the member that
+  link to open in their own browser, not the sandbox's, then run
+  `asgard-cli pipeline connect --continue`, which notices the connection by
+  itself.
+- `asgard-cli pipeline connect` can block on somebody else. It installs a
+  GitHub App, which in many organisations needs an admin. Say so and stop
+  rather than retrying; waiting a day for the right person is normal.
+- One workspace can reach several accounts, and one account can serve several
+  workspaces. A connection is one provider account, so a workspace that already
+  has one may still need another for the repository this engagement is about:
+  `asgard-cli pipeline connect --account <account>`, which prints the app's
+  install URL when that account has no installation yet.
+- One row from `asgard-cli pipeline list` does not answer the question. An
+  existing pipeline may be for a different repository entirely, and
+  `pipeline create` is as normal as `pipeline use`. Ask which; the output
+  shows both for that reason.
+- A workspace with no projects is the normal start, not a fault. A release
+  deploys into a project, so nothing deploys until one exists:
+  `asgard-cli pipeline project create <name>` makes one, with the default
+  environment that `pipeline release create` requires. It consumes account
+  quota, so a refusal there is a subscription limit rather than a bad name.
+- Do not write any CR until `asgard-cli skill update` has run. The skills
+  describing what this server accepts - the CR shapes, the processor catalogue -
+  are fetched, not shipped. Authoring against assumptions in that window has
+  cost this project a month before.
+- Never ask anybody to type a password to you. `asgard-cli local-env` opens a
+  form for them; see the rules at the end of this file.
+
+Read `docs/spec/asgard/` first. If its module index is empty, no behaviour
+has been settled yet and the first job is the three decisions below.
+
+Before any conversation with the customer, run the briefing for it:
+
+    `.agents/skills/asgard-platform/brief/customer-meeting.md`
+
+Talking to a customer changes no file, so nothing in this repository prepares
+anybody for it, and it carries the most risk in this engagement. Every entry in
+`.agents/skills/asgard-platform/brief/` exists because somebody got that
+activity wrong - `write-chart` before touching a chart, `handover` before
+telling anyone it is live.
+
+Read what this repository records before deciding anything. Each of these
+reads one file back, and each takes `--format json`:
+
+    asgard-cli question      what nobody has answered yet, and who each is with
+    asgard-cli request       what the customer asked for and is not done
+    asgard-cli task          the task specs that are open
+    asgard-cli project       what each chart declares, and what its shape lacks
+
+No command reports where this engagement is, because the work has no fixed
+steps; an engagement that already has every requirement is at none of them.
+The table below lists what the work is made of, not an order to do it in.
+`asgard-cli guide <name>` reads one piece of guidance at any time, and grep
+reaches them by subject.
+
+| name | the work | produces |
+|---|---|---|
+| `requirements` | inventory the customer's systems, and who talks to each one | `docs/meeting-notes/`, then a `docs/decisions/` record |
+| `projects` | decide how the work splits into projects | `projects/<slug>/` via `asgard-cli project add` |
+| `data-sources` | wire up the databases | `.env` connection groups, `DataConnector` CRs |
+| `read-path` | decide each project's read path | `SemanticLayer`, or a fixed-query `Toolset` |
+| `entry-point` | decide each project's entry point | the agent hub, or `BotProvider` -> `Workflow` - or nothing, if the shape has none |
+| `knowledge` | decide where unstructured knowledge lives, if there is any | a `SourceSet` Drive |
+| `verify` | run the gate | see Acceptance Gate |
+| `deploy` | deploy | see Deploy / CI |
+
+Not every chart ends with an entry point. Which CR kinds finish one depends on
+what this project is for, which the files cannot say and no tool can check -
+so say it in the chart next to what makes it unusual. `asgard-cli size` lists
+the shapes an engagement chooses between.
+
+Steps 4, 5 and 6 are the three decisions in the next section. Each has an
+obvious answer that is wrong.
+
+### The CLI
+
+`asgard-cli` scaffolded this repo and stays useful afterwards. Most of what it
+knows is files rather than commands - the platform material is under
+`.agents/skills/asgard-platform/` and you read it with `cat` and `grep`. The
+commands are for reading this repository:
+
+| what to run or open | when |
+|---|---|
+| `asgard-cli gate` | after changing anything under a chart or `.asgard-pipeline.yaml`, and before pushing. Everything this machine can check, in one command. A repository of custom resources has no compiler; this is the nearest thing to one, and it is one command so that it cannot go stale the way a checklist does |
+| `.agents/skills/asgard-platform/brief/<what>.md` | before a meeting, a chart change or a handover. The activity you are about to do, and how it has been got wrong |
+| `asgard-cli question` | what nobody has answered yet, and who each is waiting on. Read this before designing anything |
+| `asgard-cli request`, `asgard-cli task` | what the customer asked for, and the task specs open against it |
+| `asgard-cli workbench` | the tracker the customer sees. The workspace's issues (ISS-N): what the customer's side has to answer or supply, what is wrong in what is live. Read with `list` / `show`; `create`, `comment` and `attach` are filing, and asked first. See "Where a thing is filed" |
+| `asgard-cli project` | what each chart declares, and what it still lacks. It reports no step, because there is none |
+| `asgard-cli guide <name>` | the guidance for one decision; `asgard-cli guide` lists it |
+| `grep -ril "<term>" .agents/skills/asgard-platform/` | start here for a question. The wiki, the shapes, what to get from the customer, the briefs and the guidance are all files there. Read its `aliases.md` first if the question was asked in another language |
+| `.agents/skills/asgard-platform/usecase/` | before authoring any CR. How each shape is built, taken from deployments already in production: when to use it, the skeleton, the fields that are not obvious, and what the mistake cost someone. The same documents are in `.agents/skills/asgard-platform/usecase/`, so grep finds a shape from what the customer asked for |
+| `asgard-cli check` | one step of `gate`, when that is the step you are fixing |
+| `.agents/skills/desktop-browser/` | a web page has to be operated with the person watching and able to take over - an external system's admin console during an Extension's `setup/`, a vendor's developer portal. It opens one visible Chromium window on this computer and drives it over CDP; they sign in, you never read a secret. **Not in the Workbench assistant's sandbox** (`ASGARD_SANDBOX_MODE=true`): there the browser is the sandbox's, driven by its built-in `browser` skill, and this skill's scripts refuse to run |
+| `asgard-cli extension search <system>` | the customer names an external system - Google Drive, NetSuite, an ERP. When an Extension teaches it, `asgard-cli extension get <id>` puts it in `.agents/skills/<id>/` and its `SKILL.md` is where to start; `asgard-cli extension status` says which ones this repository holds. When there is none, connect the system with the platform material alone. When an Extension's material is wrong or missing, report it with `asgard-cli extension issue-report <id>` rather than editing the copy |
+| `asgard-cli local-env` | somebody has to give you a credential. Opens a form on 127.0.0.1 for them to type it into, and reports back which keys were filled - never the values. Re-read `.env` after it, since they can add keys. When an admin console has just shown a secret it shows only once, first ask them to save it somewhere they keep and wait until they say so; never read it off the page. In the Workbench assistant's sandbox it opens the form in a new tab of the sandbox's browser, leaving the console's tab as it was, and ends: call `open_sandbox_browser` so the member takes it over, then `asgard-cli local-env --wait`, which closes the form's tab |
+| `asgard-cli operate` | after a release has deployed, for what a chart cannot say: run a Syncer now (`operate syncer sync`) and read what its runs did (`operate syncer executions`); fire a Trigger and read its invocations and logs (`operate trigger`); refresh a context index now (`operate source-set reindex`); grant an OAuthCredential, which a chart cannot (`operate oauth-credential authorize`); read and write a SourceSet's or a SkillSet's files (`operate source-set ls`, `put`); talk to an Agent's or a flow agent's preview, a Trigger's invocation or a context index (`operate chat send`). Nothing under it edits a CR - a change made there would be reverted by the next deploy |
+| `asgard-cli project add <slug>` | the engagement discovers a new project |
+| `asgard-cli init` | when this CLI has a newer version. It wrote this skeleton and re-running is safe: it writes what is missing and refreshes the material it owns, including the managed region of this file, and what is above the marker here survives. `--force` takes the newer shipped material |
+| `asgard-cli skill update` | when the platform says the reference material here is behind. It writes what the Asgard server this repository deploys to actually enforces - the processor catalogue and its config keys - into `.agents/skills/`. Commit what it writes; the diff is the changelog |
+
+What each chart declares is read from what is on disk - which files exist, which
+CR kinds each chart declares - not from a counter and not from a stored list. It
+stays right when someone does a step by hand, and it cannot claim work is
+finished that is not.
+
+This repository stores no list of its own projects. They are the chart paths
+`.asgard-pipeline.yaml` names, union the directories under `projects/`. Every
+namespace comes from the platform project a release binds to, and the
+repository's own name is read by nothing. The only file recording anything about
+the platform is `.asgard-cli.yaml`, and it records two ids.
+
+## The three decisions that get answered wrong
+
+Each has an obvious answer and a correct one, and finding the correct one cost
+a rewrite. The CRs do not record the reasoning, so it is written here.
+
+All three depend on who is on the other end. An internal caller that can
+authenticate and an anonymous visitor need different shapes.
+
+### 1. The read path: semantic layer, or fixed query tools
+
+| audience | answer |
+|---|---|
+| internal, authenticated | `SemanticLayer`, one per source system, one Agent each |
+| public, anonymous | a `Toolset` of zero-parameter fixed queries, no semantic layer |
+
+A semantic layer is wrong for a public audience. Mounted, it lets the agent
+compose arbitrary SQL over every cube in it,
+and the exposed surface grows each time a cube is added, because nobody goes
+back to narrow it. Excluding the sensitive tables does not fix this; the shape
+itself is the risk.
+
+With fixed tools, what can be asked is decided by a few statements in version
+control, no user input reaches SQL so the injection surface is zero, and
+widening it takes a CR change and a review.
+
+> Answered wrong once: a public site got a `SemanticLayer` first, and it was
+> removed and replaced with five zero-parameter query tools.
+
+"Zero-parameter" means the model supplies nothing; it does not mean every
+caller sees the same rows. An anonymous channel can still answer "where is MY
+repair case": the identity is injected server-side on every turn, arriving in
+the request the front end sends rather than as a tool argument the model fills
+in, and the query filters on it. The model still picks only which question, so
+the injection surface is still zero. Whatever sits in front is what knows who is
+talking; if nothing in front knows, the per-customer half cannot be built at all,
+and that is a question for the customer. See `.agents/skills/asgard-platform/usecase/
+per-turn-credentials`, which also carries the failure mode: a query that forgets
+to filter on the injected identity fails only on the anonymous path, which is
+the path nobody tests.
+
+A trap in the tools themselves: when two tools sit on the same FROM/JOIN and
+differ only in projection, each one's `description` has to name the other as
+the alternative, and that is where a model picks wrong. Merge them and make the
+difference a column value instead of a tool choice.
+
+### 2. The entry point: agent hub, or your own BotProvider
+
+| audience | answer |
+|---|---|
+| a caller that can authenticate to the platform | the platform's per-namespace `preset-agent-hub`, with an `Agent` CR per system. You author no BotProvider |
+| an anonymous visitor | your own `BotProvider` -> `Workflow` -> `SandboxBlueprint` |
+
+The agent hub cannot serve a public widget. An `Agent` CR is reachable only
+through `preset-agent-hub`, and that endpoint requires an authenticated caller.
+`BotProvider.entrypoint` accepts a `Workflow`, never an `Agent`. So a public
+audience forces the second shape, however it is configured.
+
+In that shape the capabilities live one CR further out, on the
+`SandboxBlueprint`: its own `toolsetNames` / `skillSetNames` / `sourceSetMounts`.
+Searching the `Workflow` CRD for the link finds nothing, and that has led to a
+wrong conclusion before.
+
+A single public agent needs no `Agent` CR. Its prompt goes on the workflow's
+processor and its capabilities on the blueprint; an `Agent` in the blueprint's
+`agents[]` would put a second set of instructions for the same job beside the
+first.
+
+> Answered wrong once: a public widget was specced onto the agent hub, then
+> re-decided as a self-hosted chain.
+
+### 3. Unstructured knowledge: a SourceSet Drive
+
+Use a `SourceSet` with `spec.contextIndex`, mounted read-only on the
+`SandboxBlueprint`, queried with the sandbox's builtin graphify skill.
+
+This is a recommendation, not a platform rule. `KnowledgeBase`, `Loader`,
+`Indexer` and `Source` are all live CRDs with no deprecation marker, and the
+console ships the feature. The recommendation rests on one engagement that
+built the Loader-and-retrieval-workflow way and rebuilt it on a Drive. An older
+chart containing one is a shape somebody chose before that.
+
+Setting `contextIndex` is all it takes: the reconciler derives three
+same-named CRs that mount the Drive writable and run the indexer on a cron.
+Clearing the field tears them down and renames the index aside. To pause it,
+label the SourceSet `context-index-suspend`; do not remove the field.
+
+> Answered wrong once: knowledge was built on `KnowledgeBase` + `Loader` +
+> retrieval workflows, and the whole mechanism was removed.
+
+### When you settle one of these
+
+Write a `docs/decisions/YYYY-MM-DD-<topic>.md` for it on the day it is settled,
+and say why the rejected option was rejected. Nobody can reconstruct that
+sentence later, and it stops the next engagement from making the same choice.
+
+## Project Layout
+
+```
+Asgard/
+├── .asgard-pipeline.yaml          # ★ THE DEPLOYMENT DECLARATION — which releases exist,
+│                                  #   what triggers each, which keys each takes. NO VALUES.
+├── .asgard-cli.yaml               # which workspace/pipeline this checkout acts in.
+│                                  #   CLIENT-SIDE ONLY — the platform never reads it
+├── .asgard-scaffold.json          # which CLI version shipped the material IT owns here,
+│                                  #   and what it wrote. Committed. Not edited by hand
+├── .asgard-docs.json              # which version of the PLATFORM's reference material is
+│                                  #   here, written by `asgard-cli skill update`
+├── assets/                        # cross-project shared plumbing
+│   ├── skills/<skill>/SKILL.md    # RUNTIME skills, synced into the platform
+│   └── README.md                  # what is shared and what is not
+├── projects/<project>/
+│   └── chart/
+│       ├── app/templates/<kind>/  # one directory per CR kind, one file per CR
+│       └── app/values.yaml        # DEFAULTS ONLY. Real values live on the platform
+├── .agents/skills/                # DESIGN-TIME skills — for the coding agent working in this repo
+│   ├── spec-workflow/             #   turn unclear work into a reviewable spec
+│   ├── db-query/                  #   read the customer's own systems: 8 connector classes,
+│   │                              #     read-only, and how to get a credential without
+│   │                              #     asking anybody to type a password into a chat
+│   ├── semantic-layer-modeling/   #   turn an introspected schema into a SemanticLayer
+│   ├── proposal-deck/             #   a slide deck for the CUSTOMER, from their own material
+│   ├── plain-chinese/             #   any 繁體中文 a customer reads — the shapes that
+│   │                              #     mark it as machine-written
+│   ├── desktop-browser/           #   a visible browser on THIS computer, over CDP, for a
+│   │                              #     page the person has to watch or take over. Never in
+│   │                              #     the Workbench sandbox, which has its own
+│   └── (fetched)                  #   asgard-cr-verification and the CR/processor
+│                                  #     references come from `asgard-cli skill update`,
+│                                  #     because they describe the server you deploy to
+├── docs/                          # Spec-Driven Development — the spec & decision layers
+│   ├── README.md                  #   the index + the four-layer model + the AGENTS.md boundary
+│   ├── spec-driven-development.md #   the SDD rules (status flow, task spec format, gates)
+│   ├── spec/asgard/          # ★ LIVING SPEC — what the system does NOW (read this first)
+│   ├── decisions/                 #   dated, immutable decision records — why it was decided
+│   └── meeting-notes/             #   raw discussion before it converges (optional layer)
+├── plugins/asgard-fde/commands/   # slash commands over asgard-cli — /where, /asked,
+│                                  #   /filed, /gate, /propose. The CLI holds the
+│                                  #   knowledge; these hold the ORDER
+├── requirements/ references/      # executable task specs / background material
+├── AGENTS.md                      # ← this file, the SoT
+└── CLAUDE.md                      # one line: @AGENTS.md
+```
+
+### `.asgard-cli.yaml` — which platform objects this checkout acts on
+
+`asgard-cli` needs to know which workspace and which pipeline before it can do
+anything. Both are required and neither is derived, so both are recorded in
+`.asgard-cli.yaml` beside the declaration, and that file is committed: a fresh
+clone and a fresh agent both inherit it.
+
+    asgard-cli workspace show     which one is in effect, and why that one
+    asgard-cli workspace use <id> record the workspace — this CLEARS the pipeline line
+    asgard-cli pipeline use <id>  record the pipeline
+
+Nothing is guessed, including from a list of one. A command with nothing
+recorded lists the candidates and refuses to run. The pipeline is not read off
+the `origin` remote, because a repository may have any number of remotes and
+which one carries that name is up to its owner.
+
+A pipeline belongs to one workspace, so `workspace use` clears the pipeline
+line. Until `pipeline use` fills it back in, every `asgard-cli pipeline` command
+here refuses and names the remedy, so the failure lands on the next command
+rather than on whichever later one happens to be destructive. Commit both lines
+together. `asgard-cli gate` has a `binding` step that goes red on the half
+state.
+
+This does not catch a copied repository. Nothing here is checked against a git
+remote, so a repository copied wholesale into another repository of the same
+workspace keeps a pipeline id that still resolves. Run
+`asgard-cli pipeline use <id>` after copying a repository. Copied into a
+different workspace it fails, because the pipeline is not there.
+
+The platform never reads this file. A run reads the declaration at the
+pipeline's config path and the chart it names, and nothing else, so nothing in
+this file can make a deployment succeed or fail. `--workspace` and
+`ASGARD_WORKSPACE` outrank it. That is the safe direction: acting on a test
+workspace when the customer's was meant costs a confusing error, and the reverse
+deploys to a customer.
+
+There is no CD workflow in this repository, and no per-environment values
+files. The platform runs the rollout: a tag matching a release's rule produces a
+run that renders the chart, checks every CR against the cluster's own CRDs,
+waits for review and applies. This repository holds the chart and the one
+declaration.
+
+Adding a project = add `projects/<project>/chart`, declare its releases in
+`.asgard-pipeline.yaml`, and create each one on the platform bound to the platform project
+whose namespace it deploys into:
+
+    asgard-cli pipeline release create <name> --project <id>
+
+A project usually needs one release per environment, not one release.
+`<project>-dev` and `<project>-prod` name the same `chart:` directory and differ
+by `on.pattern`; what separates them is that each is created against a
+different platform project, and the platform project decides the namespace.
+One release is the shape for a POC nobody will maintain. If you find out later
+that it needs more, the platform project, the namespace and the release name
+are already the ones production is using.
+
+A tag matching a release nobody created produces no run at all — `asgard-cli pipeline
+deliveries` says so, and nothing else will. Also add the project to the root `README.md`
+table; `asgard-cli check` cross-checks it against the actual folders.
+
+### `.asgard-scaffold.json` — which CLI version shipped the material it owns here
+
+Some of what is in this repository is neither yours nor the platform's:
+`asgard-cli` ships it. That is `AGENTS.md` and the design-time skills under
+`.agents/skills/` that did not come from `asgard-cli skill update`. This record
+says which version of the CLI wrote each of them, and what it wrote. It is
+committed, and nothing edits it by hand.
+
+It exists because a file being present does not mean it is up to date. A newer
+`asgard-cli` carries newer skills, and without a record of who wrote the ones
+here, three states that look identical on disk cannot be told apart:
+
+    behind   the CLI moved on and nobody here touched the file -> `asgard-cli init --force`
+    edited   somebody here changed it, and --force would discard that
+    ahead    a NEWER CLI than yours wrote this repo -> upgrade asgard-cli
+
+`asgard-cli init` reports all three, and the third is the one `--force` will not act on: the flag
+takes newer shipped material, never older. It also reports a fourth, `retired` — a file some
+older CLI shipped here and this one does not, which nothing else in the repository would notice.
+
+So do not edit `.agents/skills/` by hand. The next `--force` replaces a
+correction made there; it belongs upstream, in the CLI. The one edit the CLI
+expects is the project list at the top of this file, which ships as `TODO` rows
+for the engagement to answer — which is why answering one is reported as
+`edited` and left alone rather than overwritten.
+
+It is a separate file from `.asgard-docs.json` because that one is the
+platform's record of the material `asgard-cli skill update` fetches. Two
+authorities, two records, and the versions in them are unrelated numbers.
+
+## Entry point shapes — the field-level difference
+
+The audience decides which shape to use - see the three decisions above. This
+table is what each one looks like once chosen.
+
+| | **A. Agent hub** | **B. Self-hosted workflow, tools inline** | **C. Flow Agent** |
+|---|---|---|---|
+| Entry | the platform's per-namespace `preset-agent-hub` — you do not author it | your own `BotProvider` → your own `Workflow` | your own `BotProvider` → your own `Workflow` |
+| Capabilities bound via | an `Agent` CR; the caller passes `agent_hub.agent_names[]` per turn | `toolsets` / `semanticLayers` written straight onto the `stream-llm-completion-message` processor | `sandboxBlueprint` on that processor → `SandboxBlueprint`'s own `toolsetNames` / `skillSetNames` / `sourceSetMounts` |
+| Who can reach it | only a caller that can authenticate | anyone the BotProvider lets in | anyone the BotProvider lets in |
+| `Agent` CRs in the chart | one per source system | none | none, unless the blueprint lists Agents for several areas of work |
+
+Field shapes to keep straight in shape C, all `ValueExprTemplate`: the names
+fields carry a comma-separated string in `value`; `sourceSetMounts` carries a
+JSON string the controller unmarshals (`sourceSetName` / optional `subPath` /
+`mountPath` starting with `/` / `readOnly`). The workflow's processor must not
+re-declare `toolsets` — that would be a second declaration of the same
+capability, and the two would drift.
+
+One wrong mount path breaks every conversation. `mountPath` is validated as
+`^/.+` and nothing else - no traversal check - and a mount under the agent's
+`~/.claude` kills the driver at start-up with a symptom that does not point at
+the mount. `sourceSetMounts` is also the only mechanism that takes a `subPath`,
+so it is the only way to isolate one tenant's files. Read
+`.agents/skills/asgard-platform/usecase/conventions.md` before writing one.
+
+## SemanticLayer conventions
+
+Common analysis views go in top-level `sampleQueries[]` (`comment` + `sql`),
+never as a cube-level `sql:` virtual cube.
+
+Run every `sampleQuery` against the live database before committing it. One
+that errors or returns nonsense misleads the agent that reads it.
+
+A dimension's `name` is the column its `sql` selects — `name: ProductId` with
+`sql: '{CUBE}.ProductId'`, never a re-cased alias. Measure names are aggregates
+rather than columns, so they stay descriptive.
+
+Write a `description` on every cube, dimension and measure, in 繁體中文, to the
+rules in `.agents/skills/plain-chinese/`. The agent reads these to decide which
+column answers a question, so a vague adjective here costs a wrong column rather
+than a bad sentence, and a column without a description is effectively
+invisible to the model.
+
+
+## This repo is a knowledge base, and you maintain it
+
+Most of what is here is not code. It is what this engagement learned about one
+customer's systems, and this repository is the only place it exists — the next
+agent to open it starts from these files and nothing else. Accurate documents
+that nobody can navigate are of little use.
+
+There are four layers, and they are separated by tense:
+
+| layer | tense | answers |
+|---|---|---|
+| `docs/meeting-notes/` | a moment before it converged | what was actually discussed |
+| `docs/decisions/` | a dated snapshot, immutable | why it was decided that way |
+| `docs/spec/asgard/` | always now | what the system does today |
+| `requirements/` | the future, then dead | what will be done |
+
+> To learn what this system does, read the living spec. `requirements/` is a
+> work queue, not a source of truth: a task spec stops being read once it
+> reaches `done`, so anything durable left inside one stays on disk and is never
+> opened again.
+
+Three rules follow:
+
+- One fact, one home; everywhere else links. About to copy a paragraph? Link
+  instead. Two copies drift, and once they disagree the reader cannot tell which
+  is current, so the second copy is worse than none.
+- A change is not done until the bookkeeping is done: index updated,
+  cross-reference fixed, delta applied to the living spec. That half is yours,
+  and you can touch many files in one pass. Do it in the same pass rather than
+  reporting that an index needs updating.
+- An answer you had to assemble is new knowledge. If you answered a question
+  by reading several files, the next reader will read the same ones unless you
+  file the answer. Ask whether they would have to redo this.
+
+`asgard-cli check` audits the mechanical half — pages nothing links to, a module
+missing from its index, undated filenames, links that do not resolve. The half
+it cannot see (pages that contradict each other, claims a newer source
+superseded, concepts nobody owns) is the `knowledge-base` skill under
+`.agents/skills/`. Run that pass when picking up a repo somebody else worked on,
+before a handover, or after a burst of decisions.
+
+Where a fact belongs when it is not obvious:
+[`requirements/README.md`](requirements/README.md) for `requirements/`,
+[`docs/README.md`](docs/README.md) for the layers,
+[`references/README.md`](references/README.md) for the customer's own material.
+
+
+## Two kinds of skills — design time vs runtime
+
+They are not interchangeable. Decide which one you are writing first, because
+the delivery mechanism is completely different.
+
+| | `.agents/skills/<skill>/SKILL.md` | `assets/skills/<skill>/SKILL.md` |
+|---|---|---|
+| **Who reads it** | the coding agent working in this repo (you) | the deployed Asgard agent, at runtime |
+| **When** | design time — while authoring CRs | runtime — while answering a user |
+| **How it is delivered** | read straight from the working tree | committed → `SourceSet` syncs the repo → `SkillSet` `searchPaths` selects it → bound by `Agent.managed.skillSetNames` or `SandboxBlueprint.spec.skillSetNames` |
+| **Reaches the cluster?** | never | yes, that is the point |
+| **What it can reach** | this laptop - `.env`, and any network path you have | the sandbox, whose environment is a closed list the reconciler builds. No value this engagement supplies reaches it |
+
+The last row decides the design; the other rows are paperwork. A runtime skill
+runs in a real environment, so it can do what a Workflow cannot - a non-HTTP
+protocol, a vendor CLI, an API too large to enumerate as tools. It cannot hold
+a static service key: there is no `env` on `Agent`, `SandboxBlueprint` or
+`SkillSet`, `credentialMounts` resolves only an `OAuthCredential`, and a hook is
+an expression in the CR spec. So that route is open only when the credential
+arrives per turn from the caller, and a system that needs a static key is
+reached from a Workflow instead. The fields that argument was read off are in
+`.agents/skills/asgard-platform/usecase/external-api.md`.
+
+`.agents/skills/db-query/` reads `.env` because it runs on this laptop, not
+because it is a skill. It is the skill you meet first and use most, so it is
+the one you learn by example from, and what it shows is true of design time
+only. A runtime skill written the same way deploys cleanly and then tells a
+person it cannot connect, in a sentence that reads like a missing setting.
+
+A SkillSet is three CRs. The platform's `POST /v1/skill-set/from-git` creates a
+`SkillSet` + its own `SourceSet` + the git `Syncer` that fills it, bound 1:1:1.
+Several SkillSets sharing one SourceSet leaves the UI unable to find "this skill
+set's git config", and it renders as a skill set with no source. Keep one file
+per SkillSet under `templates/skill_set/<name>.yaml` holding all three CRs
+separated by `---`.
+
+Three conventions, and what each one breaks:
+
+| convention | why |
+|---|---|
+| the Syncer's `destinationPath` is `git/`, trailing slash included | the CRD rejects a `destinationPath` without one, for every syncer class but `static-content`, whose destinationPath is a file |
+| `asgard-ai.com/managed-by: skill-set` on the SourceSet and the Syncer | it hides the Syncer from the generic list, and it is what the platform cascades on when a SkillSet is deleted |
+| one `searchPath` per skill directory | each path is searched recursively for `SKILL.md`, so `git/skills/` loads every skill in the repository, including ones added later; `git/skills/pdf/` loads one, and keeps the set explicit |
+
+## Display Annotations
+
+Every CR the Platform UI lists needs an `asgard-ai.com/<kind>-name` annotation, in 繁體中文 —
+without it the CR applies cleanly and then appears nameless in the UI, which no amount of
+linting or dry-running reveals. `asgard-cli verify` enforces it.
+
+These are noun phrases the customer reads in their own console, so the vocabulary
+half of `.agents/skills/plain-chinese/` applies: 「訂單查詢」not「智慧化訂單查詢
+賦能模組」. The sentence-shape half does not — there is no sentence.
+
+| kind | required | also useful |
+|---|---|---|
+| `Agent` | `agent-name` | — (`spec.managed.description` already carries the description) |
+| `SemanticLayer` | `semantic-layer-name` | — |
+| `DataConnector` | `data-connector-name` | — |
+| `SkillSet` | `skill-set-name` | `skill-set-description` |
+| `SourceSet` | `source-set-name` | `source-set-description` |
+| `Syncer` | `syncer-name` | `syncer-description` |
+| `BotProvider` | `bot-provider-name` | `additional-annotation` → `embedConfig`(widget 外觀) |
+| `SandboxBlueprint` | `sandbox-blueprint-name` | `sandbox-blueprint-description` |
+| `Toolset` | `toolset-name` | `toolset-description` |
+| `Workflow` | `workflow-name` | — |
+| `Trigger` | `trigger-name` | — |
+| `KnowledgeBase` | `knowledge-base-name` | — |
+| `Loader` | `loader-name` | — |
+| `CompletionModel` | `completion-model-name` | — |
+| `Plugin` | `plugin-name` | — |
+
+A SkillSet a Plugin bundles is the one exemption — it is implementation detail
+of the bundle and the platform does not present it, so it carries no
+`skill-set-name` and no `managed-by` label. `asgard-cli verify` knows that shape
+and does not ask for one.
+
+> The authority for every platform key is `asgard-ai-platform/asgard-workflow-service`,
+> `internal/shared.go` — every `Annotation*` / `Label*` constant the platform reads, with
+> comments on what it does. Read it rather than inferring a convention from another repo's charts.
+> Anything not on `asgard-cli verify`'s list is invisible to every check here, so a new UI
+> label also needs a check.
+
+## Workflow sets — the metadata that decides whether the UI shows anything
+
+The platform's UI lists workflow sets, not single `Workflow` CRs. A workflow set
+is the group of Workflows sharing `asgard-ai.com/workflow-set-id`, exactly one of
+which carries `main-workflow-set: "true"`. Everything here is UI-only: nothing
+changes runtime, and a CR omitting all of it is valid, so `helm lint`, CRD
+validation and server dry-run all stay green.
+
+| what's missing | what the user sees |
+|---|---|
+| the set labels | the Workflow is in no set → nothing to list. An empty Flow Agents / Automations page |
+| annotation `workflow-set-name` | the set is listed, nameless |
+| the Trigger CR's own two labels | the Trigger editor opens as a blank canvas |
+
+| on the Workflow | value | what it decides |
+|---|---|---|
+| label `workflow-set-id` | the CR name (one workflow = one set is the simple case) | which set this Workflow belongs to |
+| label `main-workflow-set` | `"true"` | which member is the set's entry — exactly one. Zero → never listed; two → the front end picks whichever came first |
+| label `workflow-key` | the CR name | the Workflow's own identity inside the set |
+| label `workflow-set-type` | `bot` / `automation_tool` / `trigger` | which UI section it appears in |
+| annotation `workflow-set-name` | 顯示名 | the set's name in the UI (`workflow-name` is the single Workflow's) |
+
+There are three set types, not two. `trigger` was added later, so a CR dumped
+from an older cluster shows `automation_tool` for a Trigger workflow and is not
+a template to copy.
+
+A `Trigger` needs two labels of its own, invisible from the Workflow side: its
+editor reads `asgard-ai.com/workflow-set-id` (equal to its entrypoint
+Workflow's) and `asgard-ai.com/project-environment-id` straight off the Trigger
+CR. The platform copies both onto a Trigger it creates itself; a hand-written CR
+has to carry them itself.
+
+Write only Workflow + Trigger. The `Trigger` reconciler provisions the
+BotProvider, its API-key Secret, and the CronJob itself. Hand-writing a
+BotProvider for a Trigger is wrong.
+
+## The values the platform injects: `.Values.asgard.*`
+
+Never write a namespace, a Secret name, an environment id or a version number
+into a chart. The platform layers a reserved block over your values on every
+run, and the chart reads it:
+
+| key | what it is |
+|---|---|
+| `.Values.asgard.release` | the helm release name, `iac-<name>` |
+| `.Values.asgard.releaseName` | the name as the declaration spells it |
+| `.Values.asgard.namespace` | the namespace this release deploys into |
+| `.Values.asgard.projectId` | the platform Project id |
+| `.Values.asgard.projectEnvironmentId` | that project's main environment id |
+| `.Values.asgard.appSecretName` | this release's own Secret |
+| `.Values.asgard.appConfigMapName` | this release's own ConfigMap |
+| `.Values.asgard.ref` | the tag or branch that triggered the run |
+| `.Values.asgard.commitSha` | the full commit SHA |
+| `.Values.asgard.agentHubGlobalSourceSetName` | the SourceSet behind Agent Hub's Global Directory, which a Syncer writes `AGENTS.md` into (`asgard-cli add agentsmd`) |
+
+The chart's `appVersion` is set to the ref for you. A `values.yaml` that defines its own `asgard`
+key gets a lint warning and is overridden.
+
+`projectEnvironmentId` surfaces as the label `asgard-ai.com/project-environment-id`, carried by
+`Workflow`, `CompletionModel` and `Trigger` only. It is injected, so it does not have to be
+fetched after the namespace exists and pasted into a per-environment values file.
+
+## Where a thing is filed
+
+Three places. Who has to act on it decides which:
+
+| who has to act on it | where | command |
+|---|---|---|
+| the customer's side has to see, answer, supply or decide it - or something is wrong in what is live | the workspace's Workbench (the customer reads it) | `asgard-cli workbench create` |
+| whoever builds next needs it: the spec, the design, an open decision | this repository's records | `asgard-cli question add`, `request add`, `task add` |
+| the makers of `asgard-cli`, or of the platform behind it | upstream, a feedback only the maintainers read | `asgard-cli issue-report --new`, then `--send` |
+| the owners of an Extension, because its material is wrong or missing | upstream, the same feedback; the maintainers pass it on | `asgard-cli extension issue-report <id> --new`, then `--send` |
+
+- A failure of `asgard-cli` goes upstream, not on the Workbench as a bug,
+  even when it happened while working on an issue. The Workbench's `bug` type
+  is for what is wrong in the customer's deployment, and the customer reads
+  it. Report the tool upstream; on the issue, say at most that the work is
+  blocked. A command that failed, or blamed the wrong thing, belongs to the
+  tool; the maintainers route it on if the platform is at fault.
+- Nothing about the customer goes upstream: a report leaves this engagement
+  for a third party's service. Their ERP failing, what they still owe, the bot
+  they run answering wrongly: each is a Workbench issue (a `question` while it
+  blocks the build, a `bug` once it is live).
+- One thing can need two places. What the customer asked for is a request
+  spec here, because the spec is what gets built from. If the customer also
+  follows it on the Workbench (ask; do not assume), write the ISS-N in the
+  spec so each is found from the other. The same goes for a question the
+  customer has to answer that also shapes the design.
+- In the Workbench assistant's sandbox (`ASGARD_SANDBOX_MODE=true`), what the
+  member has to keep track of goes on the Workbench: a repository record
+  reaches nobody until somebody with administration pushes it. Report a gap in
+  the tool with `asgard-cli issue-report`, with the same rule about the
+  customer's content; the member may be the customer's own staff.
+
+Filing in either place is asked first, like everything that leaves this
+checkout.
+
+## When the tool is wrong
+
+`asgard-cli` carries the platform knowledge, and some of it will be wrong or
+missing. Do not fix that here. A note in this repository helps only this
+engagement; the next one starts with the same gap. Do not put it on the
+Workbench either: the customer reads that, and the gap is in the tool.
+
+    asgard-cli issue-report
+
+It says how to write the report and send it, and what to put in. Two parts are
+often left out: the state you were in, so somebody can reproduce it, and where
+the answer turned out to be, because a page that does not exist and a page
+nobody can find need different repairs.
+
+File even when unsure: "I looked for X and could not tell whether it exists" is
+either a missing page or a wrong signpost, and both are fixes.
+
+Never paste this customer's content into an upstream issue: their document,
+their systems, their people. Describe the shape only.
+
+An Extension under `.agents/skills/asgard-ext-*/` is somebody else's material
+too. When it is wrong or missing something, do not edit the copy: report it
+with
+
+    asgard-cli extension issue-report <id>
+
+which records the Extension and its version and goes to the same maintainers,
+who pass it on to its owners. The same rule about the customer's content
+applies. A local copy (`source: local` in `.asgard-extensions.json`) is not
+reported: its author is testing it, or it is the customer's own.
+
+## Completion Model
+
+Default: use the platform's builtins by name. No CR, and no model API key to
+hold. One setting — `defaultCompletionModelName`, read by every `SemanticLayer`
+and overridable per-env. Never hardcode a model name in a template: the builtin
+tiers are semantic aliases, and a specific name becomes something to come back
+and fix when that model is retired.
+
+A `CompletionModel` CR exists for the exception. Write one when the customer
+brings their own model or their own key — three reference deployments do:
+
+    completionModelClass:  aoai-chat | openai-chat | gemini | anthropic | mistral | builtin | gcp-anthropic
+    exactly one of:        aoaiChat, openaiChat, gemini, anthropic, mistral, builtin, gcpAnthropic
+    the key:               spec.<provider>.apiKey.valueFrom.secretKeyRef into the release Secret
+                           (gcpAnthropic: spec.gcpAnthropic.credentials, a GCP service account key JSON,
+                           plus projectId and an optional location, default global)
+
+Two things the CRD enforces and helm will not tell you: `completionModelClass`
+is immutable — changing it means a new CR, not an edit — and exactly one
+provider block may be present, so a half-migrated CR with two is rejected by the
+apiserver, not by `helm lint`.
+
+It also carries `asgard-ai.com/project-environment-id`, like `Workflow` and `Trigger`.
+
+`SemanticLayer.spec.completionModelName` is required; an `Agent` takes no model (the caller
+picks the model per turn).
+
+## Secrets
+
+The name is injected, never written. Each Release has its own Secret and ConfigMap,
+`iac-<release>-app-secret` and `iac-<release>-app-config`, created and maintained by the Platform
+the moment the Release exists — empty until Variables are set. Their names arrive as
+`.Values.asgard.appSecretName` and `.Values.asgard.appConfigMapName`, and the chart reads them
+through the chart helper `{{ include "<project>.appSecretName" . }}` — `_helpers.tpl` defines it,
+and `asgard-cli add` writes it into every CR that needs a credential.
+
+A chart that writes a name instead points at an object that is not in its
+namespace, and nothing catches it: the CR is valid, the dry run passes, apply
+succeeds, `gate` is green, and the credential fails to resolve at runtime with
+no error on the CR. A literal `app-secret` anywhere in a template is this bug.
+The name is real in the Terraform-provisioned demo namespaces and absent from
+every Release namespace, which is why it looks correct.
+
+A key reaches the Secret only if it is declared. It takes two steps, and the
+first is the one that gets missed:
+
+    .asgard-pipeline.yaml   appSecret:  - key: <name>      the declaration
+    asgard-cli pipeline variables set --release <r> --kind secret <name> --from-file <path>
+
+A value set without a declaration is stored and never injected — `variables list` reports it as
+`ORPHAN`, and the run reports `vars/orphan`. `configMapKeyRef` works the same way against
+`appConfigMap:`.
+
+Only `asgard-cli verify` reports the reverse case. A key that is declared and
+read by no template is created and injected on every run into a Secret no CR
+names: `variables list` shows a value, nothing says `vars/orphan`, and every
+check is green. It happens when a shape changes and whatever read the key is
+replaced, which leaves a live credential declared for a system this chart no
+longer talks to. `verify` warns; the fix is to write the reader or to delete
+the declaration, and you have to decide which.
+
+Which keys, and how many, is this deployment's design, not a rule this file can state:
+
+- `asgard_resource_api_key` — the platform resource credential: `SourceSet.apiKey`,
+  `Toolset.apiKey`, `BotProvider.adminApiKey`, and `generic.apiKey` on a BotProvider with
+  `authMode: api-key`. `asgard-cli add` writes the reference. It is this release's own value,
+  so nobody is asked for it. When no use case calls the resource from outside the platform, set
+  a random value yourself, before the first deploy:
+  `asgard-cli pipeline variables set --release <release> --kind secret asgard_resource_api_key --random`.
+  A key missing from the Secret resolves to an empty string, and an empty key lets through a
+  request that sends none. When a caller does need it — a BotProvider's front end, a script
+  managing a SourceSet's volume through edgeserver — generate it the same way and hand it over.
+  Never reference `preset-agent-hub`: that is Agent Hub's own credential, never rotated,
+  and `asgard-cli gate` reports it. Separate keys per resource are a requirement — rotation
+  scope and blast radius are the question — so they belong in `requirements/`. The Platform
+  never reads a key's name; it reads whatever `secretKeyRef.key` says.
+- `asgard-github-pat-password` — only when a git `Syncer` clones a private repo.
+- one `<system>_db_password` per database. `asgard-cli add dataconnector` prints the exact key
+  names it wrote.
+
+Charts only ever write `secretKeyRef` / `configMapKeyRef`, never the values, and
+must not declare the Secret or the ConfigMap themselves — the Platform owns both.
+
+## Deploy
+
+The platform runs the rollout. There is no CD workflow in this repository and no
+cluster credential on any developer's machine.
+
+A tag matching a release's rule in `.asgard-pipeline.yaml` produces a run, which walks six
+steps: Checkout, Lint, Variables, Render & Dry-run, Review, Apply. The dry run sends every
+rendered CR to the apiserver, so the CRDs' own CEL rules, patterns and required fields are checked
+against the real cluster before anything is written. Apply then writes this release's Secret and
+ConfigMap, does `helm upgrade --install`, and triggers the Syncers marked
+`asgard-ai.com/auto-fire-on-rollout: "true"`.
+
+    git push origin dev-0.1.0
+    asgard-cli pipeline runs watch --release <name> --ref dev-0.1.0
+
+`watch` waits for the run the push created, follows the steps and prints the plan report or the
+reason it failed. A run stops at review unless the release has auto-apply on:
+
+    asgard-cli pipeline runs approve <run-id>
+
+Auto-apply belongs to the release, not to a run, and it can be changed after the
+release is created:
+
+    asgard-cli pipeline release update <name> --auto-apply
+    asgard-cli pipeline release update <name> --no-auto-apply
+
+It is read when a plan finishes, so a run already waiting for review keeps waiting either way.
+
+Apply uses the chart and values captured when the plan ran, not the repository
+as it is now, so a tag moved or a file edited since then changes nothing about a
+run waiting for review.
+
+> The remaining ordering trap: a tag matching a release nobody created on the
+> platform produces no run at all. `asgard-cli pipeline deliveries` says so, and
+> nothing else will. Create it once, bound to the project whose namespace it
+> deploys into:
+>
+>     asgard-cli pipeline release create <name> --project <id>
+
+> [!IMPORTANT]
+> Do not `helm upgrade` from a laptop. No cluster credential is issued to a
+> client, so there is nothing to upgrade with. A Syncer that pins `revision: {{ .Chart.AppVersion }}` needs
+> the ref the platform stamps into `appVersion`; a local install would render a placeholder as a
+> git ref that does not exist and the Syncer would fail to clone every run. `asgard-cli render`
+> renders only, with placeholder values, and has no install path.
+
+## Helm Commands
+
+```bash
+# Render a release locally. The chart comes from its entry in .asgard-pipeline.yaml and the
+# reserved .Values.asgard.* block is filled with placeholders.
+asgard-cli render <release>
+```
+
+A local render is not what deploys. The platform renders with the release's real
+values and real ids and then checks every CR against the cluster's CRDs; this
+renders with placeholders and checks nothing. Use it for the fast loop that does
+not need a push: does the template compile, does it produce the objects I meant.
+The plan report is the authoritative answer.
+
+`asgard-cli render` needs only `helm` on PATH.
+
+There is no `helm lint` line here on purpose. Linting a chart on its own
+defaults is what catches a `.Values.*` with no default, and it is
+`asgard-cli gate`'s `lint` step, which supplies the reserved `asgard` block and
+nothing else. A bare `helm lint <chart>` supplies nothing, so it fails on every
+chart that reads `.Values.asgard.projectEnvironmentId`, which is every chart
+that labels anything, and makes a correct chart look broken. The `lint` step
+cannot be run on its own and its obvious substitute is wrong, so run the gate.
+
+## Acceptance Gate
+
+This gate is for charts. A deck has its own gate, and no command runs it.
+`asgard-cli gate` reads CRs, so nothing here looks at a slide, and a deck fails
+on its sentences rather than on a field. Before any deck leaves this
+repository, run `## Before you send it` in `.agents/skills/proposal-deck/SKILL.md`,
+starting at question 0, and the second pass in
+`.agents/skills/plain-chinese/SKILL.md`, which asks two questions rather than
+one. Both work per sentence rather than per file, and both exist because a
+person reading one draft made the same correction seven times.
+
+Load the `asgard-cr-verification` skill (`.agents/skills/`) and run its gate;
+release omitted = every release. Any red step stops the work.
+
+That skill comes from the platform rather than from the CLI, so it describes the Asgard server
+this repository deploys to. If it is not there, or the CLI says the material here is behind:
+
+```bash
+asgard-cli skill update    # writes it, plus the CR shapes and the processor catalogue
+```
+
+Locally, before pushing, run one command:
+
+```bash
+asgard-cli gate            # every release
+asgard-cli gate <release>  # one of them
+```
+
+It runs everything this machine can check, in order, and a step that could not run is reported
+as skipped rather than passed:
+
+`asgard-cli gate --help` is the authoritative list. The table below is a
+convenience copy in this repository and changes only when `asgard-cli init` is
+re-run; the `shipped` step below reports when it is out of date, and this table
+is one of the files it reports on.
+
+| step | what it proves |
+|---|---|
+| `tools` | `helm` is on PATH; without it the chart steps cannot run |
+| `repo` | the structural invariants a chart render cannot see |
+| `shipped` | this file and the design-time skills are still what the installed `asgard-cli` carries. The one freshness check that always runs — it compares against the binary rather than a platform, so no session and no `--offline` skips it. `edited` and `ahead` warn rather than fail: the first is somebody here having changed shipped material on purpose, the second is the binary being older than this repository, which is an install to upgrade rather than a repository to fix |
+| `binding` | `.asgard-cli.yaml` names a workspace and a pipeline the platform still has. Catches a half-bound checkout — `workspace use` clears the pipeline line — before some later command acts on it |
+| `skills` | the reference material here still describes the server this repo deploys to |
+| `extensions` | no Extension here asks for a newer asgard-cli than this one, each Extension in `.asgard-extensions.json` is what is on disk, and no `asgard-ext-*` directory is missing from it; then whether a newer version of one is out, which needs a session. It only warns |
+| `lint` | `values.yaml` defaults every `.Values.*` the chart itself owns. It supplies the reserved `asgard` block and nothing else — linting with no `-f` at all fails on every chart that reads `.Values.asgard.*`, which a chart must not declare |
+| `render` | each release renders |
+| `verify` | the rendered CRs against each other: dangling references between CRs and inside a SemanticLayer (a join's cube and dimensions, `primaryKeyDimensions`), both halves of every entrypoint, display annotations, workflow-set labels, the agent-split invariants |
+
+The individual commands (`asgard-cli check`, `asgard-cli verify`) still exist and are what to
+reach for when one step fails and you want only that one.
+
+Then push, because the rest cannot be done here:
+
+4. `asgard-cli pipeline runs watch --release <name> --ref <tag>`
+
+Do not skip step 4. It is where every rendered CR is sent to the apiserver with
+a server-side dry run, so the CRDs' CEL rules, patterns, required fields and
+unknown-field pruning are checked against the real cluster. Nothing local can do
+that: no cluster credential is issued to a client, which is why steps 1–3 are
+shaped as they are — they check what a dry run passes and runtime still fails.
+
+5. `asgard-cli pipeline manifest --release <name> --summary` — what is on the cluster now.
+
+Step 5 is needed because step 4 does not always prove anything. The rollout's
+apply step fires the Syncers this release deploys that carry
+`asgard-ai.com/auto-fire-on-rollout`, and fails when one cannot be fired, so for
+a release with no Syncer nothing after the dry run proves the platform accepted any of it — a
+succeeded run means helm returned. `asgard-cli verify` warns about exactly that,
+and this is what to run when it does. Add `--status` for what each object
+reports about itself.
+
+Know what it cannot tell you. `ok` is derived from presence, and roughly half
+the Asgard kinds declare no status schema at all — in a chart of a
+`DataConnector` and a `SemanticLayer` no object can report anything, so presence
+is all there is, and what is left is to ask the layer a question through an
+Agent that reads it: `asgard-cli operate chat send agent/<name> "<question>" --release <r>`.
+This command tells you that directly, without dumping YAML.
+
+A reconciler's complaint lands in a Kubernetes Event when the CR has nowhere to
+put it, and no command here shows Events. This is deliberate: a release's
+deploy identity is scoped to `asgard-ai.com` so that it can only read back what
+it was allowed to create, and events are a core-group kind it never writes. The
+platform does not widen that identity for every release, permanently, to serve
+a diagnostic. Where a CR reports nothing, verify by using the thing:
+`asgard-cli operate` runs a Syncer, fires a Trigger and talks to an Agent's or a
+flow agent's preview. What a preview cannot reach - attachments, the sandbox's
+browser - is the member's to try in the Console.
+
+`pipeline manifest` reads live state and does not diff: comparing the cluster against the IaC
+source needs the source, and the source is here. Render locally and compare — live against the
+render of the deployed commit says somebody changed the cluster; the render of HEAD against the
+deployed commit says the repository is ahead.
+
+Two more `pipeline` subcommands are worth knowing and are not named above:
+`asgard-cli pipeline repos --connection <id>` lists what a provider connection can reach (a
+repository missing from it was not granted to the installation, which is changed on the provider),
+and `asgard-cli pipeline releases` lists the releases the platform holds for this pipeline.
+
+What the plan found, and what each rule code means, is documented by the
+platform, not here. `.agents/skills/asgard-cr-verification/` is fetched from the
+server this repository deploys to and rewritten on every
+`asgard-cli skill update`; it carries the run steps and every rule code. It says
+nothing about `asgard-cli gate`, because a server cannot know which version of
+the CLI is installed here. Local half: `asgard-cli gate --help`. Server half:
+that skill.
+
+## Spec-Driven Development
+
+- Treat `requirements/` as implementation source of truth; `references/` is background only.
+- Task specs: `requirements/tasks/TASK-xxx-*.md`, registered in `requirements/tasks/_index.md`.
+- Status flow: `draft` → `ready` → `in-progress` → `done` (never `in_progress`).
+- What may live in `requirements/` at all is ruled by
+  [`requirements/README.md`](requirements/README.md) — two record types and
+  nothing else, and the tense test that decides the rest: `requirements/` is
+  written in the future tense, the living spec in the present. A sentence still
+  true after the work is finished belongs in the living spec, not in a task spec
+  that stops being read at `done`. Read it before putting anything in
+  `requirements/` that is not a `REQ-*.md` or a `TASK-*.md`.
+- SDD is required for a new `SemanticLayer`/`DataConnector`, widening an agent's queryable
+  cubes, or re-introducing a write path — the databases are real.
+
+This file and the living spec answer different questions, and a fact belongs to exactly one:
+
+| | `AGENTS.md` (here) | `docs/spec/asgard/` |
+|---|---|---|
+| Answers | how to change this repo | what the system does |
+| Holds | layout, template conventions, Helm/CRD gotchas, how to run the gate | capability boundaries, data 口徑, routing rules, state machines, the security argument |
+| Test | "not knowing this breaks the chart" | "not knowing this makes the behaviour wrong" |
+
+When a change lands, there are two obligations beyond the code: apply the
+behaviour delta to the matching `docs/spec/asgard/<module>.md`, and write
+one `docs/decisions/YYYY-MM-DD-<topic>.md` for each decision that got settled.
+
+## Helm / Platform Gotchas
+
+- All resources use `apiVersion: asgard-ai.com/v1alpha1`.
+- Differences between releases are values, and values live on the platform. Two releases of one
+  chart differ by what `asgard-cli pipeline variables set` put on each; the chart has one
+  `values.yaml`, and it holds defaults.
+- A field the CRD does not declare is silently pruned, and a plain `kubectl apply
+  --dry-run=server` reports success. Helm's server-side apply does not — it builds a typed
+  patch and fails with `field not declared in schema`. The platform's plan checks for this and
+  reports it as `crd/unknown-field` before anything is applied, which is why the plan report is
+  the step that cannot be skipped.
+- Read CRD shapes from the cluster you deploy to, not from a local checkout of the CRD repo —
+  the two can disagree, and a deprecated field is easy to find in an older checkout.
+- `Workflow.spec.processors[].configs[].name` is a free-form string. A wrong config name lints
+  clean, passes CRD validation, and then does nothing at runtime. A typo in a reference is
+  caught by `asgard-cli verify`; an invented key is not.
+- A failed `helm upgrade` can leave the namespace partially applied. The previous revision
+  stays `deployed`, so the next upgrade proceeds without a rollback — but do not assume "the deploy
+  failed" means "nothing changed".
+- An object helm does not own - one the platform or another release created first - is
+  refused at the plan, as a dry-run rejection naming the release that owns it. The pipeline
+  has no step that adopts it; ask the platform team.
+- `Toolset.tools[]` require `requestConsent` (bool); `Agent.managed.prompt` requires all of
+  `persona`/`task`/`context`/`format`, and `managed.aliasName` + `managed.description` are required.
+- Render with `asgard-cli render` before committing template changes; there is no app to run.
+
+<!-- asgard-cli:managed:end -->
