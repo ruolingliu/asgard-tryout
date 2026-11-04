@@ -1,0 +1,88 @@
+# ag-hello
+#
+# An Agent CR is a capability group: the tools, skills and data one area of work
+# needs, plus the guidance for working in it. It deploys nothing and is not a
+# separate assistant. The entry point is the platform's per-namespace
+# preset-agent-hub, the caller selects agents per turn with
+# payload.agent_hub.agent_names[], and the agent of that turn holds every
+# selected Agent's capabilities and does the work itself.
+#
+# TODO before this is usable:
+#   1. description - what this capability covers, in the customer's business
+#      nouns. The agent reads it to decide when this guidance applies. Do not
+#      name tools, skills or semantic models: the platform lists them beside it.
+#      Where another agent looks similar, say which side of the line each is on.
+#   2. prompt - only what is specific to this area of work. Every selected
+#      Agent's prompt is shown to the same agent in one turn, so a block copied
+#      into each Agent is repeated once per Agent. Rules for every turn belong
+#      in the Global Directory's AGENTS.md, which `asgard-cli add agentsmd`
+#      writes from this chart.
+#   3. At least two sampleQuestions while published.
+apiVersion: asgard-ai.com/v1alpha1
+kind: Agent
+metadata:
+  name: ag-hello
+  annotations:
+    asgard-ai.com/agent-name: "ag-hello"
+  labels:
+    # The on/off switch: callers build agent_names[] from the published agents.
+    asgard-ai.com/agent-published: "true"
+    {{- include "tryout.labels" . | nindent 4 }}
+spec:
+  agentClass: managed
+  managed:
+    # The handle a user writes as @<aliasName> to point at this capability.
+    # Convention: the CR name without its ag- prefix.
+    aliasName: hello
+    description: |-
+      asgard-cli 試跑用的 agent,只回「hello」等寒暄,不處理任何其他問題。
+    prompt:
+      persona: |-
+        你是這個試跑 project 的招呼 agent。你唯一任務是驗證 Agent Hub 跟整條 pipeline 有通。
+      task: |-
+        收到任何訊息,就用一句繁中問候回覆,然後說明這是 Asgard tryout 的最小 agent,沒有其他能力。
+      context: |-
+        沒有外部資料。你不會查資料庫、不會打 API、不會存檔。
+      format: |-
+        一到兩句繁中,不要列點。
+    sampleQuestions:
+      - 哈囉,你是誰?
+      - 現在這個環境是什麼?
+    skillSetNames:
+      - sk-base
+    # No semantic layer. An agent needs at least one capability source, so give
+    # it toolsetNames instead, or the gate rejects it.
+    # toolsetNames:
+    #   - ts-<name>
+
+    # The Neko browser sidecar, for a system that has no database to read and
+    # no API - only a web console. The flag is easy; the work is the reference
+    # documents the agent needs to drive that UI, so none is written here. A plain boolean on an Agent and a `value:` string on a
+    # SandboxBlueprint -
+    # `.agents/skills/asgard-platform/usecase/browser-operation.md` has both
+    # spellings, which of the two settings wins, and when a web UI is the right
+    # route at all.
+    # browser:
+    #   enabled: true
+
+    # Files from a SourceSet, mounted into the sandbox pod of every turn that
+    # selects this Agent. The mount is a choice about what this agent works on,
+    # so none is written.
+    #
+    # A YAML list here. The same field on a SandboxBlueprint is a stringified
+    # JSON array, and people copy one shape into the other - both shapes are side by side in
+    # `.agents/skills/asgard-platform/usecase/conventions.md`, which also has
+    # where a mount may go and the one parent directory that kills the driver.
+    #
+    # sourceSetName, mountPath and readOnly are required on every entry, and
+    # mountPath must match `^/.+`. Two entries resolving to one mountPath are
+    # deduplicated silently, first one wins, so a collision shows up as a
+    # missing mount. subPath mounts a slice of the store rather than
+    # all of it - the only mechanism that does - and a rejected one takes the
+    # whole Sandbox not-ready rather than skipping the entry; the same page has
+    # what it rejects.
+    # sourceSetMounts:
+    #   - sourceSetName: ss-<name>
+    #     mountPath: /knowledge
+    #     readOnly: true
+    #     subPath: <dir>/

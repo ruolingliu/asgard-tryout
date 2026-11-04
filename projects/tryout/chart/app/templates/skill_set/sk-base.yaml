@@ -1,0 +1,115 @@
+# sk-base
+#
+# A SkillSet takes three CRs: the SkillSet, its own SourceSet, and the git
+# Syncer that fills it, bound 1:1:1 and kept in this one file.
+#
+# Do not point several SkillSets at one SourceSet. The Platform UI reads the
+# 1:1:1 structure, and sharing leaves it unable to find a skill set's git
+# config - it renders as a skill set with no source. Runtime is unaffected, so
+# this goes unnoticed.
+apiVersion: asgard-ai.com/v1alpha1
+kind: SourceSet
+metadata:
+  name: ss-base
+  annotations:
+    asgard-ai.com/source-set-name: "sk-base 來源"
+  labels:
+    # Needed on this CR and on the Syncer, and it does a different thing on
+    # each. Here the front end reads it to recognise that this store belongs
+    # to one skill set; on the Syncer it keeps the Syncer out of the generic
+    # Syncer list. The platform also cascades on it when the SkillSet is
+    # deleted.
+    asgard-ai.com/managed-by: skill-set
+    {{- include "tryout.labels" . | nindent 4 }}
+spec:
+  # This release's own resource key, declared under `appSecret:` in
+  # .asgard-pipeline.yaml. edgeserver checks it as `X-API-KEY` on this
+  # resource's own endpoints, and the platform's own callers read it back from
+  # the CR, so nothing else has to know it. When no use case calls those
+  # endpoints from outside the platform, set a random value and ask nobody:
+  #   asgard-cli pipeline variables set --release <release> --kind secret \
+  #     asgard_resource_api_key --random
+  # Set it before the first deploy: a key missing from the Secret resolves to an
+  # empty string, and an empty key matches a request that sends none.
+  # Never `preset-agent-hub`: that is Agent Hub's own credential. Nor is this the
+  # X-API-KEY the documentation tells you to create. See
+  # `.agents/skills/asgard-platform/usecase/conventions.md`.
+  apiKey:
+    valueFrom:
+      secretKeyRef:
+        name: {{ include "tryout.appSecretName" . }}
+        key: asgard_resource_api_key
+---
+apiVersion: asgard-ai.com/v1alpha1
+kind: Syncer
+metadata:
+  name: syn-base
+  annotations:
+    asgard-ai.com/syncer-name: "sk-base 同步"
+  labels:
+    asgard-ai.com/managed-by: skill-set
+    # Scheduler off, and the deploy fires it instead: the platform's apply step
+    # fires the Syncers of this release that carry auto-fire-on-rollout, so sync
+    # timing is tied to deploys on purpose.
+    #
+    # auto-fire-on-rollout-wait: "false" means the deploy does not wait for the
+    # sync, so a run succeeds even when the sync fails - a wrong repoUrl or an
+    # expired token shows only in `asgard-cli operate skill-set executions`.
+    # Read it after every deploy that changes the skills. Remove the label to
+    # make the run wait and fail with the sync instead:
+    # `.agents/skills/asgard-platform/wiki/knowledge.md`.
+    #
+    # suspend and auto-fire are both required, and neither reads the other.
+    # auto-fire-on-rollout is opt-in and only the platform's runner reads it;
+    # the Syncer module ignores it and never looks at suspend. So a suspended
+    # Syncer without auto-fire never runs - the skills resolve to zero, the
+    # chart renders, the gate passes and nothing reports it.
+    #
+    # A sync interrupted mid-copy leaves a partial skill tree, and on a
+    # suspended Syncer only the next deploy repairs it. Dropping suspend and
+    # scheduling the Syncer repairs it on the next run instead;
+    # `.agents/skills/asgard-platform/wiki/knowledge.md` has the trade.
+    asgard-ai.com/syncer-suspend: "true"
+    asgard-ai.com/auto-fire-on-rollout: "true"
+    asgard-ai.com/auto-fire-on-rollout-wait: "false"
+    {{- include "tryout.labels" . | nindent 4 }}
+spec:
+  sourceSetName: ss-base
+  # A relative path inside the volume. The trailing slash is required:
+  # without it the CRD rejects the resource.
+  destinationPath: "git/"
+  # No statePath on a git syncer - it follows revision, and a cursor belongs to
+  # a database syncer, which keeps it in its status.
+  syncerClass: git
+  schedule: "0 */6 * * *"
+  timeZone: Asia/Taipei
+  git:
+    repoUrl: "https://github.com/ruolingliu/asgard-tryout.git"
+    # Only for a large repository of which the skills are a few folders: list
+    # them, relative to the repository root, and nothing else is downloaded.
+    # Every searchPath below has to stay inside one of them -
+    # `.agents/skills/asgard-platform/usecase/skill-set.md` has the rest.
+    # includePaths:
+    #   - skills/pdf/
+    revision: "main"
+    # A public repo needs no auth block, and no PAT key to declare.
+---
+apiVersion: asgard-ai.com/v1alpha1
+kind: SkillSet
+metadata:
+  name: sk-base
+  annotations:
+    asgard-ai.com/skill-set-name: "sk-base"
+    # 繁體中文, read in the customer's own console. Vocabulary rules in
+    # .agents/skills/plain-chinese/ apply; the sentence-shape ones do not,
+    # because this is a phrase rather than a sentence.
+    asgard-ai.com/skill-set-description: "tryout 用的空技能集,只為讓 Agent 通過 R1b"
+  labels:
+    {{- include "tryout.labels" . | nindent 4 }}
+spec:
+  sourceSetName: ss-base
+  searchPaths:
+    # Searched recursively for SKILL.md. One path per skill keeps the set
+    # explicit; a parent directory loads every skill under it, and a path the
+    # sync never writes loads nothing. No check sees which.
+    - git/.agents/skills/

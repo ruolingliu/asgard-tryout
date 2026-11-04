@@ -72,5 +72,6 @@ releases:
       pattern: '^v[0-9]+\.[0-9]+\.[0-9]+$'
     chart: projects/tryout/chart/app
     chartValues: []
-    appSecret: []
+    appSecret:
+      - key: asgard_resource_api_key
     appConfigMap: []
