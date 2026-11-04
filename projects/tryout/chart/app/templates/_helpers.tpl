@@ -1,0 +1,100 @@
+{{- define "tryout.name" -}}
+{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{- define "tryout.fullname" -}}
+{{- if .Values.fullnameOverride }}
+{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- $name := default .Chart.Name .Values.nameOverride }}
+{{- if contains $name .Release.Name }}
+{{- .Release.Name | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- define "tryout.chart" -}}
+{{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{- define "tryout.labels" -}}
+helm.sh/chart: {{ include "tryout.chart" . }}
+{{ include "tryout.selectorLabels" . }}
+# Audit-log product dimension: every Asgard CR this chart applies is the
+# Platform's. asgard-core echoes it into every audit event; the preset
+# reconcilers stamp agent-hub / data-insight on their own.
+asgard-ai.com/product: platform
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+
+{{- define "tryout.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "tryout.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app: {{ include "tryout.name" . }}
+{{- end }}
+
+{{/*
+Secret 與 ConfigMap 的名字來自 Platform,永遠不由 chart 決定。
+
+每個 Release 有自己的一組 —— `iac-<release>-app-secret` 與
+`iac-<release>-app-config` —— 由 Platform 建立與維護,名字在每次 Run 以保留值
+注入。chart 自己寫一個名字,就是指向一個在它 namespace 裡不存在的物件,而**沒有
+任何一道關卡會擋**:CR 合法、dry-run 通過、apply 成功,只有 runtime 取不到憑證。
+
+**刻意用 `required` 而不是 `default`。** default 會渲染出一個看起來合理的名字,
+把上面那個失敗藏起來 —— 這正是它曾經出錯的方式:`default "app-secret"`,而
+`app-secret` 在 Terraform 建的 demo namespace 裡是真的存在的名字,在任何 Release
+的 namespace 裡都不存在。所以那個 fallback 讀起來完全正確。
+*/}}
+{{- define "tryout.appSecretName" -}}
+{{- required "Platform 每次 Run 注入 .Values.asgard.appSecretName;用 `asgard-cli render` 或 `asgard-cli gate` 渲染,它們會供給這組值" .Values.asgard.appSecretName }}
+{{- end }}
+
+{{- define "tryout.appConfigMapName" -}}
+{{- required "Platform 每次 Run 注入 .Values.asgard.appConfigMapName;用 `asgard-cli render` 或 `asgard-cli gate` 渲染,它們會供給這組值" .Values.asgard.appConfigMapName }}
+{{- end }}
+
+{{/*
+Workflow-set metadata —— 沒有這組東西,Workflow 在 Platform UI 上是隱形的。
+
+平台不以「Workflow CR」為 UI 單位,而是以 **workflow set**:一組共用
+`asgard-ai.com/workflow-set-id` 的 Workflow,其中恰有一支帶 `main-workflow-set: "true"`。
+沒有這組 label 的 Workflow 不屬於任何 set,UI 就沒有東西可以列 —— 而 apply 完全正常,
+lint、CRD 驗證都不會有任何反應,只有打開 UI 才看得出來。
+
+set 的型別決定它出現在哪一區(權威來源:asgard-workflow-service/internal/shared.go):
+  bot             → Flow Agents。BotProvider 指向這個 set 裡的 workflow 時,
+                    才會被列成它的 release(channel 或 Agent Hub)。
+  automation_tool → Automations(API / MCP 消費),也是 Toolset 工具選單過濾的依據。
+  trigger         → 屬於它的 Trigger,刻意不出現在 Automations。
+
+用法:
+  {{- include "tryout.workflowSetLabels" (dict "name" "wf-xxx" "type" "bot") | nindent 4 }}
+  {{- include "tryout.workflowSetAnnotations" (dict "name" "wf-xxx" "displayName" "顯示名") | nindent 4 }}
+
+`workflow-set-id` / `workflow-key` 這裡都直接用 CR 名字 —— 一支 workflow 自成一個 set,
+名字天然唯一,而且人看得懂。(平台自己在 UI 建立時是發 snowflake ID;GitOps 沒有那個
+需求,取名字更好追。)
+*/}}
+{{- define "tryout.workflowSetLabels" -}}
+asgard-ai.com/main-workflow-set: "true"
+asgard-ai.com/workflow-key: {{ .name | quote }}
+asgard-ai.com/workflow-set-id: {{ .name | quote }}
+asgard-ai.com/workflow-set-type: {{ .type }}
+{{- end }}
+
+{{/*
+`workflow-set-name` 是 set 在 UI 上的顯示名(`workflow-name` 是單支 workflow 的)。
+
+畫布版面不由 chart 管:沒有 node_positions ConfigMap 時後端會做拓樸自動排版;
+使用者拖過之後平台自建 ConfigMap 保存。版面的 SoT 在 UI。
+*/}}
+{{- define "tryout.workflowSetAnnotations" -}}
+asgard-ai.com/workflow-set-name: {{ .displayName | quote }}
+{{- end }}

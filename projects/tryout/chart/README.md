@@ -1,0 +1,81 @@
+# tryout chart
+
+`tryout` 這個 project 所需的 Asgard CR。
+
+> 這份文件的中文寫法見
+> [`.agents/skills/plain-chinese/`](../../../.agents/skills/plain-chinese/)。
+> 它是接手的人第一個打開的檔案。
+
+部署目標見 repo 根目錄的 [`.asgard-pipeline.yaml`](../../../.asgard-pipeline.yaml):
+一份 chart 可以被好幾個 Release 用,每個 Release 對到一個 Platform Project(= 一個
+namespace)、由一條 tag 或 branch 規則觸發。namespace 由那個 Project 決定,不寫在這裡
+也不寫在 chart 裡;chart 用 `.Values.asgard.namespace`。
+
+現況用 `asgard-cli pipeline releases` 看。
+
+## 資產清單
+
+> TODO:每加一個 CR 就補一列。reviewer 用這張表看這個 chart 現在有什麼,
+> 部署後人工驗證也照這張表。
+
+| Kind | 名稱 | 用途 |
+|---|---|---|
+
+## 專屬 Secret 需要哪些 key
+
+> TODO:這個 chart 的 CR 用到哪些憑證,逐一列出。每個 Release 有自己專屬的
+> Secret,由 Platform 建立與維護,名字注入 `.Values.asgard.appSecretName`;chart 只寫
+> `secretKeyRef` 指過去,不得自己宣告那個 Secret。key 名要與
+> `.asgard-pipeline.yaml` 的 `appSecret` 清單逐字一致,值用
+> `asgard-cli pipeline variables set --kind secret` 填。
+> 少一把 key 的症狀是 CR apply 成功但呼叫時失敗。
+
+| key | 誰在用 |
+|---|---|
+| `asgard_resource_api_key` | 平台資源憑證:`SourceSet.apiKey`、`Toolset.apiKey`、`BotProvider.adminApiKey`。值是這個 release 自己的。沒有 use case 從平台外呼叫這些資源時,直接設一個亂數,不用問任何人:`asgard-cli pipeline variables set --release <release> --kind secret asgard_resource_api_key --random`。第一次部署前就要設:Secret 裡沒有這把 key 時會解析成空字串,而空字串會放行不帶 key 的請求。不要引用 `preset-agent-hub`,那是 Agent Hub 自己的憑證 |
+| `<system>_db_password` | 每個資料庫一把,`asgard-cli add dataconnector` 會印出它實際寫了哪些 key 名 |
+| `asgard-github-pat-password` | 只有 git `Syncer` clone 私有 repo 時才需要 |
+
+## 非機密的 runtime 值:專屬 ConfigMap
+
+Secret 有一個對應物,而且它一樣是 Platform 建的:`.Values.asgard.appConfigMapName`。
+跟 `chartValues` 的差別在值在哪裡被解開:
+
+| | 值在哪 | 誰看得到 |
+|---|---|---|
+| `chartValues` | 烘進渲染出來的 manifest | reviewer 在 plan 報告上看得到,適合影響模板長相的值 |
+| `appConfigMap` | ConfigMap,CR 在 runtime 取 | 不進 manifest,適合會改而不想動模板的值 |
+
+兩種都在 `.asgard-pipeline.yaml` 宣告,寫法一樣:
+
+```yaml
+    recipients:
+      valueFrom:
+        configMapKeyRef:
+          key: email_recipients                                  # 與宣告逐字一致
+          name: {{ include "tryout.appConfigMapName" . }}
+```
+
+```bash
+asgard-cli pipeline variables set --release <r> --kind config email_recipients "a@x.com,b@x.com"
+```
+
+## 驗證
+
+```bash
+asgard-cli gate
+```
+
+不要裸跑 `helm lint`。Platform 每次渲染都疊一組保留的 `.Values.asgard` 進來,
+而 chart 不可以在自己的 `values.yaml` 宣告它,所以不帶 `-f` 跑會在每個讀
+`.Values.asgard.*` 的模板上失敗,也就是每個貼 label 或引用憑證的模板。`gate` 只供給
+那一個檔案,其他都不給,所以「chart 自己擁有的每個 `.Values.*` 都要有預設」這個性質
+仍然被驗到。
+
+`asgard-cli gate` 的 lint 一關只帶保留的 `asgard` 區塊、不帶任何環境檔,是唯一會驗
+「`values.yaml` 有沒有替每個 chart 自己擁有的 `.Values.*`
+宣告預設值」的一步,不要跳過。
+
+## 部署後人工步驟
+
+> TODO:例如上傳知識文件到 Drive、觸發第一輪同步。沒有的話寫「無」。

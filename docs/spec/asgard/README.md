@@ -34,3 +34,4 @@
 
 | 決議 | 日期 | 影響的模組 |
 |---|---|---|
+| [one release for CLI tryout only](../../decisions/2026-11-04-poc-single-release.md) | 2026-11-04 | - |

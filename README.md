@@ -23,8 +23,7 @@
 
 | Project | 目錄 |
 |---|---|
-
-> 還沒有 project。用 `asgard-cli project add <slug>` 新增 —— 它會連 chart 骨架一起寫。
+| `tryout` | `projects/tryout/` |
 
 <!-- asgard-cli:managed:end -->
 部署宣告只有一份:根目錄的 [`.asgard-pipeline.yaml`](.asgard-pipeline.yaml)。它列出有哪些

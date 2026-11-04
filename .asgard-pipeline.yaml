@@ -64,22 +64,13 @@
 version: 1
 
 releases:
-  # 還沒有 Project。`asgard-cli project add <slug>` 寫出 chart 之後,
-  # 一個環境一條 Release 長這樣 —— 兩條的 chart 相同,name 與 pattern 不同:
-  #
-  #   - name: <slug>-dev
-  #     on:
-  #       type: tag
-  #       pattern: '^dev-[0-9]+\.[0-9]+\.[0-9]+$'
-  #     chart: projects/<slug>/chart/app
-  #     chartValues: []
-  #     appSecret: []
-  #     appConfigMap: []
-  #   - name: <slug>-prod
-  #     on:
-  #       type: tag
-  #       pattern: '^[0-9]+\.[0-9]+\.[0-9]+$'
-  #     chart: projects/<slug>/chart/app
-  #     chartValues: []
-  #     appSecret: []
-  #     appConfigMap: []
+  # POC / 試用:一條 release,綁到 Tutorial platform project。
+  # 正式上線時通常改成一環境一條(dev + prod),理由見 requirements/ 下的 decision 記錄。
+  - name: tryout
+    on:
+      type: tag
+      pattern: '^v[0-9]+\.[0-9]+\.[0-9]+$'
+    chart: projects/tryout/chart/app
+    chartValues: []
+    appSecret: []
+    appConfigMap: []

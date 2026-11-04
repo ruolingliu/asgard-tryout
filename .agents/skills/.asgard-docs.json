@@ -1,0 +1,40 @@
+{
+  "version": "13",
+  "platform": "https://platform-api.asgard-ai.com",
+  "fetched_at": "2026-11-04T14:44:27Z",
+  "sources": {
+    "authored": "a4949e23f05e",
+    "crds": "d59539e4370a",
+    "processors": "d04a2c6c49fc"
+  },
+  "files": {
+    "asgard-cr-shapes/Agent.md": "e7bf49fef4e1",
+    "asgard-cr-shapes/BotProvider.md": "bce98d55f2f2",
+    "asgard-cr-shapes/CompletionModel.md": "7b729152b8df",
+    "asgard-cr-shapes/DataConnector.md": "183ce39a5186",
+    "asgard-cr-shapes/EmbeddingModel.md": "e83b2af2b708",
+    "asgard-cr-shapes/ImageGenerationModel.md": "df3e7ab21d30",
+    "asgard-cr-shapes/Indexer.md": "2f8b1f4b4257",
+    "asgard-cr-shapes/KnowledgeBase.md": "1e4e35bf65a8",
+    "asgard-cr-shapes/Loader.md": "95583575451d",
+    "asgard-cr-shapes/OAuthCredential.md": "e408361551bc",
+    "asgard-cr-shapes/OAuthProvider.md": "d9f93de5b431",
+    "asgard-cr-shapes/Plugin.md": "da8c7628642b",
+    "asgard-cr-shapes/SKILL.md": "d47016ecb032",
+    "asgard-cr-shapes/Sandbox.md": "328527aa2e5f",
+    "asgard-cr-shapes/SandboxBlueprint.md": "ea0e5203aeee",
+    "asgard-cr-shapes/SemanticLayer.md": "928ceaeab8f9",
+    "asgard-cr-shapes/SkillSet.md": "817b98ff30b8",
+    "asgard-cr-shapes/Source.md": "35034a3e844a",
+    "asgard-cr-shapes/SourceSet.md": "83e1c320d310",
+    "asgard-cr-shapes/SourceSetEditorServer.md": "45be6426a798",
+    "asgard-cr-shapes/Syncer.md": "3dcc0dc1fbed",
+    "asgard-cr-shapes/Toolset.md": "956198ed9f45",
+    "asgard-cr-shapes/TranscriptionModel.md": "2ccf175cd1eb",
+    "asgard-cr-shapes/Trigger.md": "647ec3c0d763",
+    "asgard-cr-shapes/Workflow.md": "a2e9541bc682",
+    "asgard-cr-verification/SKILL.md": "d5be5797fa4f",
+    "asgard-workbench-api/SKILL.md": "23be9d683da3",
+    "asgard-workflow-processors/SKILL.md": "c86ae21b6437"
+  }
+}
